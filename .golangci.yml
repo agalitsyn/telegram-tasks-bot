@@ -1,0 +1,63 @@
+# More info on config here: https://golangci-lint.run/usage/configuration/
+run:
+  timeout: 5m
+  issues-exit-code: 1
+  tests: false
+  skip-dirs: []
+  skip-files: []
+
+output:
+  formats:
+    - format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  sort-results: true
+
+linters-settings:
+  goconst:
+    min-len: 3
+    min-occurrences: 10
+  lll:
+    line-length: 140
+  gci:
+    sections:
+      - default # Default section: contains all imports that could not be matched to another section type.
+      - standard # Standard section: captures all standard packages.
+  goimports:
+    # Put imports beginning with prefix after 3rd-party packages.
+    # It's a comma-separated list of prefixes.
+    # Default: ""
+    local-prefixes: github.com/agalitsyn/telegram-tasks-bot
+
+linters:
+  disable-all: true
+  enable:
+    - copyloopvar
+    - goconst
+    - goimports
+    - gosimple
+    - gosec
+    - govet
+    - ineffassign
+    - lll
+    - misspell
+    - predeclared
+    - sqlclosecheck
+    - staticcheck
+    - typecheck
+    - unused
+
+issues:
+  exclude-rules:
+    - linters:
+        - lll
+      # Long go generate comments are excluded
+      source: "^//go:generate "
+  exclude-use-default: false
+  exclude:
+    - G104
+    - G307
+    - G304
+    - (comment on exported (method|function|type|const)|should have( a package)? comment|comment should be of the form)
+    - should have a package comment, unless it's in another file for this package
+    - declaration of "(ok|err|ctx)" shadows declaration
