@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/agalitsyn/telegram-tasks-bot/pkg/version"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -16,6 +17,7 @@ func main() {
 	cfg := ParseFlags()
 	setupLogger(cfg.Debug)
 
+	log.Printf("version: %s", version.String())
 	if cfg.Debug {
 		log.Printf("DEBUG running with config %v", cfg.String())
 	}

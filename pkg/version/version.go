@@ -3,6 +3,7 @@ package version
 import (
 	"fmt"
 	"runtime/debug"
+	"time"
 )
 
 var (
@@ -34,8 +35,16 @@ func init() {
 }
 
 func String() string {
+	// go run
 	if Revision == "" {
 		return "dev"
+	} else {
+		Revision = Revision[:7]
+	}
+
+	t, err := time.Parse(time.RFC3339, BuildAt)
+	if err == nil {
+		BuildAt = t.Format("2006-01-02 15:04:05")
 	}
 
 	s := fmt.Sprintf("%s %s at %s", Tag, Revision, BuildAt)
