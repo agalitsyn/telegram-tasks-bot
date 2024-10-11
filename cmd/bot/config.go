@@ -4,24 +4,20 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"log/slog"
 	"os"
 
 	"github.com/agalitsyn/telegram-tasks-bot/pkg/flagtools"
 	"github.com/agalitsyn/telegram-tasks-bot/pkg/secret"
-	"github.com/agalitsyn/telegram-tasks-bot/pkg/slogtools"
 	"github.com/agalitsyn/telegram-tasks-bot/pkg/version"
+
+	"github.com/fatih/color"
+	"github.com/go-pkgz/lgr"
 )
 
 const EnvPrefix = "TG_TASKS_BOT"
 
 type Config struct {
 	Debug bool
-
-	Log struct {
-		Level slog.Level
-	}
-
 	Token secret.String
 }
 
@@ -37,26 +33,36 @@ func (c Config) String() string {
 func ParseFlags() Config {
 	var cfg Config
 
-	printVersion := flag.Bool("version", false, "Show version.")
-	logLevel := flag.String("log-level", "info", "Log level (debug | info | warn | error).")
+	flag.BoolVar(&cfg.Debug, "debug", false, "Debug mode.")
 	token := flag.String("token", "", "Telegram bot token.")
+	runPrintVersion := flag.Bool("version", false, "Show version.")
 
 	flagtools.Prefix = EnvPrefix
 	flagtools.Parse()
 	flag.Parse()
 
-	slogLevel := slogtools.ParseLogLevel(*logLevel)
-	cfg.Log.Level = slogLevel
-	if slogLevel == slog.LevelDebug {
-		cfg.Debug = true
-	}
-
 	cfg.Token = secret.NewString(*token)
 
-	if *printVersion {
+	if *runPrintVersion {
 		fmt.Fprintln(os.Stdout, version.String())
 		os.Exit(0)
 	}
 
 	return cfg
+}
+
+func setupLogger(debug bool) {
+	colorizer := lgr.Mapper{
+		ErrorFunc:  func(s string) string { return color.New(color.FgHiRed).Sprint(s) },
+		WarnFunc:   func(s string) string { return color.New(color.FgHiYellow).Sprint(s) },
+		InfoFunc:   func(s string) string { return color.New(color.FgGreen).Sprint(s) },
+		DebugFunc:  func(s string) string { return color.New(color.FgWhite).Sprint(s) },
+		CallerFunc: func(s string) string { return color.New(color.FgBlue).Sprint(s) },
+		TimeFunc:   func(s string) string { return color.New(color.FgCyan).Sprint(s) },
+	}
+	logOpts := []lgr.Option{lgr.LevelBraces, lgr.Map(colorizer)}
+	if debug {
+		logOpts = append(logOpts, []lgr.Option{lgr.Debug, lgr.CallerPkg, lgr.CallerFile, lgr.CallerFunc}...)
+	}
+	lgr.SetupStdLogger(logOpts...)
 }

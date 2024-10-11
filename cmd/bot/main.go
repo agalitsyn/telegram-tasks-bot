@@ -2,13 +2,10 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
-	"os"
+	"log"
 	"os/signal"
 	"syscall"
 
-	"github.com/agalitsyn/telegram-tasks-bot/pkg/slogtools"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -17,20 +14,19 @@ func main() {
 	defer stop()
 
 	cfg := ParseFlags()
-	slogtools.SetupGlobalLogger(cfg.Log.Level, os.Stdout)
+	setupLogger(cfg.Debug)
 
 	if cfg.Debug {
-		slog.Debug("running with config")
-		fmt.Fprintln(os.Stdout, cfg.String())
+		log.Printf("DEBUG running with config %v", cfg.String())
 	}
 
 	bot, err := tgbotapi.NewBotAPI(cfg.Token.Unmask())
 	if err != nil {
-		slogtools.Fatal("could not init bot", "err", err)
+		log.Fatalf("could not init bot: %s", err)
 	}
-	slog.Info("authorized", "account", bot.Self.UserName)
+	log.Printf("INFO authorized account %s", bot.Self.UserName)
 
-	// tgbotapi.SetLogger(&BotDebugLogger{})
+	tgbotapi.SetLogger(log.Default())
 	if cfg.Debug {
 		bot.Debug = true
 	}
@@ -47,14 +43,15 @@ func main() {
 
 			if !update.Message.IsCommand() {
 				// echo
-				slog.Debug("", update.Message.From.UserName, update.Message.Text)
+				log.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
 
 				msg := tgbotapi.NewMessage(update.Message.Chat.ID, update.Message.Text)
 				msg.ReplyToMessageID = update.Message.MessageID
 
 				if _, err := bot.Send(msg); err != nil {
-					slog.Error("send failed", "err", err)
+					log.Printf("ERROR send faiiled: %s", err)
 				}
+				continue
 			}
 
 			// Create a new MessageConfig. We don't have text yet,
@@ -74,22 +71,12 @@ func main() {
 			}
 
 			if _, err := bot.Send(msg); err != nil {
-				slog.Error("send failed", "err", err)
+				log.Printf("ERROR send faiiled: %s", err)
 			}
 
 		case <-ctx.Done():
-			slog.Debug("stopped", "err", ctx.Err())
+			log.Printf("DEBUG stopped: %s", ctx.Err())
 			return
 		}
 	}
-}
-
-type BotDebugLogger struct{}
-
-func (l BotDebugLogger) Printf(msg string, args ...interface{}) {
-	slog.Debug(fmt.Sprintf(msg, args...))
-}
-
-func (l BotDebugLogger) Println(v ...interface{}) {
-	slog.Debug("bot:", v...)
 }

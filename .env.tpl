@@ -1,2 +1,2 @@
-LOG_LEVEL=debug
+DEBUG=true
 TOKEN=
