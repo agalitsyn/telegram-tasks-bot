@@ -1,6 +1,6 @@
 module github.com/agalitsyn/telegram-tasks-bot
 
-go 1.23.2
+go 1.23.0
 
 require (
 	github.com/fatih/color v1.17.0
