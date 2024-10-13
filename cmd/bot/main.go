@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/agalitsyn/telegram-tasks-bot/internal/app"
+	"github.com/agalitsyn/telegram-tasks-bot/migrations"
+	"github.com/agalitsyn/telegram-tasks-bot/pkg/sqlite"
 	"github.com/agalitsyn/telegram-tasks-bot/pkg/version"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func main() {
@@ -15,70 +19,45 @@ func main() {
 	defer stop()
 
 	cfg := ParseFlags()
+	if cfg.runPrintVersion {
+		fmt.Fprintln(os.Stdout, version.String())
+		os.Exit(0)
+	}
+
 	setupLogger(cfg.Debug)
 
-	log.Printf("version: %s", version.String())
 	if cfg.Debug {
 		log.Printf("DEBUG running with config %v", cfg.String())
 	}
 
-	bot, err := tgbotapi.NewBotAPI(cfg.Token.Unmask())
+	db, err := sqlite.Connect("db.sqlite3")
 	if err != nil {
-		log.Fatalf("could not init bot: %s", err)
+		log.Fatal(err)
 	}
-	log.Printf("INFO authorized account %s", bot.Self.UserName)
+	defer db.Close()
 
-	tgbotapi.SetLogger(log.Default())
+	if err = sqlite.MigrateUp(db, migrations.FS, "."); err != nil {
+		log.Printf("ERROR could not apply migrations: %s", err)
+		return
+	}
+	if cfg.runMigrate {
+		os.Exit(0)
+	}
+
+	log.Printf("version: %s", version.String())
+
+	botCfg := app.BotConfig{
+		UpdateTimeout: 60,
+	}
+	bot, err := app.NewBot(botCfg, cfg.Token.Unmask(), log.Default())
+	if err != nil {
+		log.Printf("ERROR could not init bot: %s", err)
+		return
+	}
 	if cfg.Debug {
 		bot.Debug = true
 	}
 
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-	updates := bot.GetUpdatesChan(u)
-	for {
-		select {
-		case update := <-updates:
-			if update.Message == nil { // ignore any non-Message updates
-				continue
-			}
-
-			if !update.Message.IsCommand() {
-				// echo
-				log.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
-
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, update.Message.Text)
-				msg.ReplyToMessageID = update.Message.MessageID
-
-				if _, err := bot.Send(msg); err != nil {
-					log.Printf("ERROR send faiiled: %s", err)
-				}
-				continue
-			}
-
-			// Create a new MessageConfig. We don't have text yet,
-			// so we leave it empty.
-			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "")
-
-			// Extract the command from the Message.
-			switch update.Message.Command() {
-			case "help":
-				msg.Text = "I understand /sayhi and /status."
-			case "sayhi":
-				msg.Text = "Hi :)"
-			case "status":
-				msg.Text = "I'm ok."
-			default:
-				msg.Text = "I don't know that command"
-			}
-
-			if _, err := bot.Send(msg); err != nil {
-				log.Printf("ERROR send faiiled: %s", err)
-			}
-
-		case <-ctx.Done():
-			log.Printf("DEBUG stopped: %s", ctx.Err())
-			return
-		}
-	}
+	log.Printf("INFO starting with authorized account %s", bot.Self.UserName)
+	bot.Start(ctx)
 }

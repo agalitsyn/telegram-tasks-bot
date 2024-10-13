@@ -8,7 +8,6 @@ import (
 
 	"github.com/agalitsyn/telegram-tasks-bot/pkg/flagtools"
 	"github.com/agalitsyn/telegram-tasks-bot/pkg/secret"
-	"github.com/agalitsyn/telegram-tasks-bot/pkg/version"
 
 	"github.com/fatih/color"
 	"github.com/go-pkgz/lgr"
@@ -19,6 +18,9 @@ const EnvPrefix = "TG_TASKS_BOT"
 type Config struct {
 	Debug bool
 	Token secret.String
+
+	runPrintVersion bool
+	runMigrate bool
 }
 
 func (c Config) String() string {
@@ -35,19 +37,14 @@ func ParseFlags() Config {
 
 	flag.BoolVar(&cfg.Debug, "debug", false, "Debug mode.")
 	token := flag.String("token", "", "Telegram bot token.")
-	runPrintVersion := flag.Bool("version", false, "Show version.")
+	flag.BoolVar(&cfg.runPrintVersion, "version", false, "Show version.")
+	flag.BoolVar(&cfg.runMigrate ,  "migrate", false, "Migrate.")
 
 	flagtools.Prefix = EnvPrefix
 	flagtools.Parse()
 	flag.Parse()
 
 	cfg.Token = secret.NewString(*token)
-
-	if *runPrintVersion {
-		fmt.Fprintln(os.Stdout, version.String())
-		os.Exit(0)
-	}
-
 	return cfg
 }
 
