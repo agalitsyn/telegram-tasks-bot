@@ -54,3 +54,9 @@ lint: $(GOLANGCI_BIN)
 .PHONY: generate
 generate:
 	go generate ./...
+
+.PHONY: db-reset
+db-reset:
+	rm db.sqlite3
+	go run -mod=vendor $(CURDIR)/cmd/bot --migrate
+	sqlite3 db.sqlite3 < fixtures/fixtures.sql

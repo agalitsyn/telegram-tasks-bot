@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 type Task struct {
 	ID          int
@@ -13,6 +16,14 @@ type Task struct {
 	Assignee    int64
 }
 
+func NewTask(projectID int, title string, createdBy int64) *Task {
+	return &Task{
+		ProjectID: projectID,
+		Title:     title,
+		CreatedBy: createdBy,
+	}
+}
+
 type TaskStatus string
 
 const (
@@ -22,3 +33,18 @@ const (
 	TaskStatusCancelled  TaskStatus = "cancelled"
 	TaskStatusOnHold     TaskStatus = "on_hold"
 )
+
+type TaskFilter struct {
+	ProjectID int
+	Status    TaskStatus
+	CreatedBy int64
+	Assignee  int64
+	Deadline  time.Time
+}
+
+type TaskStorage interface {
+	FilterTasks(ctx context.Context, filter TaskFilter) ([]Task, error)
+	CreateTask(ctx context.Context, task *Task) error
+	UpdateTask(ctx context.Context, task *Task) error
+	RemoveTask(ctx context.Context, id int) error
+}
