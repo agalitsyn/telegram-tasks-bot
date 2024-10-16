@@ -1,16 +1,30 @@
 package model
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 type Project struct {
 	ID       int
-	ChatID   int64
+	TgChatID int64
 	Title    string
-	IsActive bool
+	Archived bool
 }
 
-type ProjectStorage interface {
-	FetchProjectByChatID(ctx context.Context, chatID int64) (*Project, error)
+func NewProject(title string, tgChatID int64) *Project {
+	return &Project{
+		Title:    title,
+		TgChatID: tgChatID,
+	}
+}
+
+var (
+	ErrProjectNotFound = errors.New("project not found")
+)
+
+type ProjectRepository interface {
+	FetchProjectByChatID(ctx context.Context, tgChatID int64) (*Project, error)
 	CreateProject(ctx context.Context, project *Project) error
 	UpdateProject(ctx context.Context, project *Project) error
 	DeleteProject(ctx context.Context, id int) error

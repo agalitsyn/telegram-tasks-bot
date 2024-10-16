@@ -13,6 +13,7 @@ type Task struct {
 	Status      TaskStatus
 	Deadline    time.Time
 	CreatedBy   int64
+	UpdatedBy   int64
 	Assignee    int64
 }
 
@@ -21,12 +22,14 @@ func NewTask(projectID int, title string, createdBy int64) *Task {
 		ProjectID: projectID,
 		Title:     title,
 		CreatedBy: createdBy,
+		UpdatedBy: createdBy,
 	}
 }
 
 type TaskStatus string
 
 const (
+	TaskStatusBacklog    TaskStatus = "backlog"
 	TaskStatusTODO       TaskStatus = "todo"
 	TaskStatusInProgress TaskStatus = "in_progress"
 	TaskStatusDone       TaskStatus = "done"
@@ -42,7 +45,7 @@ type TaskFilter struct {
 	Deadline  time.Time
 }
 
-type TaskStorage interface {
+type TaskRepository interface {
 	FilterTasks(ctx context.Context, filter TaskFilter) ([]Task, error)
 	CreateTask(ctx context.Context, task *Task) error
 	UpdateTask(ctx context.Context, task *Task) error

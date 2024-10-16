@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/agalitsyn/telegram-tasks-bot/internal/app"
+	sqliteStorage "github.com/agalitsyn/telegram-tasks-bot/internal/storage/sqlite"
 	"github.com/agalitsyn/telegram-tasks-bot/migrations"
 	"github.com/agalitsyn/telegram-tasks-bot/pkg/sqlite"
 	"github.com/agalitsyn/telegram-tasks-bot/pkg/version"
@@ -46,10 +47,19 @@ func main() {
 
 	log.Printf("version: %s", version.String())
 
+	projectStorage := sqliteStorage.NewProjectStorage(db)
+	userStorage := sqliteStorage.NewUserStorage(db)
+
 	botCfg := app.BotConfig{
 		UpdateTimeout: 60,
 	}
-	bot, err := app.NewBot(botCfg, cfg.Token.Unmask(), log.Default())
+	bot, err := app.NewBot(
+		botCfg,
+		cfg.Token.Unmask(),
+		log.Default(),
+		projectStorage,
+		userStorage,
+	)
 	if err != nil {
 		log.Printf("ERROR could not init bot: %s", err)
 		return

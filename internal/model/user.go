@@ -1,6 +1,9 @@
 package model
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 type User struct {
 	ID       int
@@ -25,7 +28,11 @@ const (
 	UserProjectRoleMember  UserProjectRole = "member"
 )
 
-type UserStorage interface {
-	FetchUserInProject(ctx context.Context, projectID int, userID int) (*User, error)
+var (
+	ErrUserNotFound = errors.New("user not found")
+)
+
+type UserRepository interface {
+	FetchUserInProject(ctx context.Context, projectID int, tgUserID int64) (*User, error)
 	CreateUser(ctx context.Context, user *User) error
 }

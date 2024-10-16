@@ -57,6 +57,9 @@ generate:
 
 .PHONY: db-reset
 db-reset:
-	rm db.sqlite3
+	mv db.sqlite3 db-prev.sqlite3
 	go run -mod=vendor $(CURDIR)/cmd/bot --migrate
+
+.PHONY: db-populate
+db-populate:
 	sqlite3 db.sqlite3 < fixtures/fixtures.sql
