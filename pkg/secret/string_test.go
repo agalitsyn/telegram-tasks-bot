@@ -6,8 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"xdr/internal/secret"
-
+	"github.com/agalitsyn/telegram-tasks-bot/pkg/secret"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v2"

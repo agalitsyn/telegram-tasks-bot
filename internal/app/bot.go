@@ -122,6 +122,7 @@ func (b *Bot) startCommand(ctx context.Context, update tgbotapi.Update) error {
 
 	prj, err := b.projectStorage.FetchProjectByChatID(ctx, update.Message.Chat.ID)
 	if err != nil && errors.Is(err, model.ErrProjectNotFound) {
+		// TODO: do we need title?
 		prj = model.NewProject("test", tgChatID)
 		if err = b.projectStorage.CreateProject(ctx, prj); err != nil {
 			return fmt.Errorf("could not create project: %w", err)
