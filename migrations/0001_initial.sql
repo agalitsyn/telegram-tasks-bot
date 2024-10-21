@@ -2,7 +2,6 @@ CREATE TABLE users (
     id INTEGER PRIMARY KEY,
     tg_user_id INTEGER NOT NULL UNIQUE,
     full_name TEXT NOT NULL,
-    role TEXT NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT 1
 );
 CREATE INDEX idx_users_tg_user_id ON users(tg_user_id);

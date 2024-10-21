@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/agalitsyn/telegram-tasks-bot/internal/model"
 	"github.com/agalitsyn/telegram-tasks-bot/pkg/version"
@@ -119,44 +120,73 @@ func (b *Bot) statusCommand(update tgbotapi.Update) error {
 
 func (b *Bot) startCommand(ctx context.Context, update tgbotapi.Update) error {
 	tgChatID := update.Message.Chat.ID
-
 	prj, err := b.projectStorage.FetchProjectByChatID(ctx, update.Message.Chat.ID)
 	if err != nil && errors.Is(err, model.ErrProjectNotFound) {
-		// TODO: do we need title?
-		prj = model.NewProject("test", tgChatID)
+		prj = model.NewProject(update.Message.Chat.Title, tgChatID)
 		if err = b.projectStorage.CreateProject(ctx, prj); err != nil {
 			return fmt.Errorf("could not create project: %w", err)
 		}
+		log.Printf("DEBUG created project id=%d", prj.ID)
+	} else if err != nil {
+		return fmt.Errorf("could not fetch project: %w", err)
+	} else {
+		log.Printf("DEBUG fetch project id=%d", prj.ID)
+	}
 
-		user := model.NewUser(update.Message.From.ID)
-		user.Role = model.UserProjectRoleManager
+	user, err := b.userStorage.FetchUserByTgID(ctx, update.Message.From.ID)
+	if err != nil && errors.Is(err, model.ErrUserNotFound) {
+		user = model.NewUser(update.Message.From.ID)
 		if update.Message.From.LastName != "" && update.Message.From.FirstName != "" {
 			user.FullName = fmt.Sprintf("%s %s", update.Message.From.LastName, update.Message.From.FirstName)
 		} else if update.Message.From.UserName != "" {
+			// TODO: update.Message.From.UserName always set?
 			user.FullName = update.Message.From.UserName
 		}
-
 		if err = b.userStorage.CreateUser(ctx, user); err != nil {
 			return fmt.Errorf("could not create user: %w", err)
 		}
-	}
-	if err != nil {
-		return fmt.Errorf("could not fetch project: %w", err)
-	}
-
-	user, err := b.userStorage.FetchUserInProject(ctx, prj.ID, update.Message.From.ID)
-	if err != nil {
+		log.Printf("DEBUG created user id=%d", user.ID)
+	} else if err != nil {
 		return fmt.Errorf("could not fetch user: %w", err)
+	} else {
+		log.Printf("DEBUG fetch user id=%d", user.ID)
 	}
 
-	// TODO: remove
-	fmt.Printf("(prj): %#v\n", prj)
-	fmt.Printf("(user): %#v\n", user)
+	userAdded := false
+	err = b.userStorage.FetchUserRoleInProject(ctx, prj.ID, user)
+	if err != nil && errors.Is(err, model.ErrUserNotFound) {
+		usersInPrjNum, err := b.userStorage.CountUsersInProject(ctx, prj.ID)
+		if err != nil {
+			return fmt.Errorf("could not count users in project: %w", err)
+		}
 
-	msg := tgbotapi.NewMessage(
-		update.Message.Chat.ID,
-		fmt.Sprintf("проект id=%d юзер id=%d", prj.ID, user.ID),
-	)
+		user.Role = model.UserProjectRoleMember
+		// If this user is first user associated with project
+		if usersInPrjNum == 0 {
+			user.Role = model.UserProjectRoleManager
+		}
+
+		if err = b.userStorage.AddUserToProject(ctx, prj.ID, user.ID, user.Role); err != nil {
+			return fmt.Errorf("could not add user to project: %w", err)
+		}
+		log.Printf("DEBUG user id=%d assigned with role '%s' to project id=%d", user.ID, user.Role, prj.ID)
+
+		userAdded = true
+	} else if err != nil {
+		return fmt.Errorf("could not fetch user role for project: %w", err)
+	} else {
+		log.Printf("DEBUG user id=%d has role '%s' in project id=%d", user.ID, user.Role, prj.ID)
+	}
+
+	var text string
+	if userAdded {
+		text = fmt.Sprintf("Ваш пользователь %s добавлен в проект \"%s\" с ролью %s",
+			user.FullName, prj.Title, strings.Title(user.Role.StringLocalized()))
+	} else {
+		text = fmt.Sprintf("Ваш пользователь %s уже находится в проекте \"%s\" с ролью %s",
+			user.FullName, prj.Title, strings.Title(user.Role.StringLocalized()))
+	}
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text)
 	_, err = b.Send(msg)
 	return err
 }

@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 type User struct {
@@ -16,12 +17,22 @@ type User struct {
 func NewUser(tgUserID int64) *User {
 	return &User{
 		TgUserID: tgUserID,
-		Role:     UserProjectRoleMember,
 		IsActive: true,
 	}
 }
 
 type UserProjectRole string
+
+func (r UserProjectRole) StringLocalized() string {
+	switch r {
+	case UserProjectRoleManager:
+		return "менеджер"
+	case UserProjectRoleMember:
+		return "участик"
+	default:
+		panic(fmt.Sprintf("missing localization for %s", r))
+	}
+}
 
 const (
 	UserProjectRoleManager UserProjectRole = "manager"
@@ -33,6 +44,9 @@ var (
 )
 
 type UserRepository interface {
-	FetchUserInProject(ctx context.Context, projectID int, tgUserID int64) (*User, error)
+	FetchUserByTgID(ctx context.Context, tgUserID int64) (*User, error)
 	CreateUser(ctx context.Context, user *User) error
+	AddUserToProject(ctx context.Context, projectID int, userID int, role UserProjectRole) error
+	FetchUserRoleInProject(ctx context.Context, projectID int, user *User) error
+	CountUsersInProject(ctx context.Context, projectID int) (int, error)
 }
