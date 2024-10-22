@@ -188,11 +188,15 @@ func (b *Bot) startCommand(ctx context.Context, update tgbotapi.Update) error {
 
 	var text string
 	if userAdded {
-		text = fmt.Sprintf("Ваш пользователь %s добавлен в проект \"%s\" с ролью %s",
-			user.FullName, prj.Title, strings.Title(user.Role.StringLocalized()))
+		text = fmt.Sprintf(
+			"✨ вы добавлены в проект \"%s\" с ролью %s",
+			prj.Title, strings.Title(user.Role.StringLocalized()),
+		)
 	} else {
-		text = fmt.Sprintf("Ваш пользователь %s уже находится в проекте \"%s\" с ролью %s",
-			user.FullName, prj.Title, strings.Title(user.Role.StringLocalized()))
+		text = fmt.Sprintf(
+			"🚀 вы уже состоите в проекте \"%s\" с ролью %s",
+			prj.Title, strings.Title(user.Role.StringLocalized()),
+		)
 	}
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text)
 	_, err = b.Send(msg)
