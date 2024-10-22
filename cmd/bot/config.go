@@ -16,11 +16,12 @@ import (
 const EnvPrefix = "TG_TASKS_BOT"
 
 type Config struct {
-	Debug bool
-	Token secret.String
+	Debug      bool
+	InlineMode bool
+	Token      secret.String
 
 	runPrintVersion bool
-	runMigrate bool
+	runMigrate      bool
 }
 
 func (c Config) String() string {
@@ -37,8 +38,9 @@ func ParseFlags() Config {
 
 	flag.BoolVar(&cfg.Debug, "debug", false, "Debug mode.")
 	token := flag.String("token", "", "Telegram bot token.")
+	flag.BoolVar(&cfg.InlineMode, "inline-mode", false, "Enable bot inline mode.")
 	flag.BoolVar(&cfg.runPrintVersion, "version", false, "Show version.")
-	flag.BoolVar(&cfg.runMigrate ,  "migrate", false, "Migrate.")
+	flag.BoolVar(&cfg.runMigrate, "migrate", false, "Migrate.")
 
 	flagtools.Prefix = EnvPrefix
 	flagtools.Parse()

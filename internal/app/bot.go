@@ -13,7 +13,8 @@ import (
 )
 
 type BotConfig struct {
-	UpdateTimeout int
+	UpdateTimeout      int
+	InlineQueryEnabled bool
 }
 
 type Bot struct {
@@ -51,6 +52,13 @@ func (b *Bot) Start(ctx context.Context) {
 	for {
 		select {
 		case update := <-updates:
+			if update.InlineQuery != nil && b.cfg.InlineQueryEnabled {
+				if err := b.handleInlineQuery(update); err != nil {
+					log.Printf("ERROR handling inline query: %s", err)
+				}
+				continue
+			}
+
 			if update.Message == nil { // ignore any non-Message updates
 				continue
 			}
@@ -188,5 +196,24 @@ func (b *Bot) startCommand(ctx context.Context, update tgbotapi.Update) error {
 	}
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text)
 	_, err = b.Send(msg)
+	return err
+}
+
+func (b *Bot) handleInlineQuery(update tgbotapi.Update) error {
+	// TODO: this is example handler
+
+	query := update.InlineQuery.Query
+	log.Printf("DEBUG inline query: %s", query)
+
+	result := tgbotapi.NewInlineQueryResultArticle(update.InlineQuery.ID, "Inline title", "Message content")
+	result.Description = "Inline Description"
+
+	inlineConf := tgbotapi.InlineConfig{
+		InlineQueryID: update.InlineQuery.ID,
+		Results:       []interface{}{result},
+		CacheTime:     300,
+	}
+
+	_, err := b.Request(inlineConf)
 	return err
 }

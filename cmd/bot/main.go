@@ -51,7 +51,8 @@ func main() {
 	userStorage := sqliteStorage.NewUserStorage(db)
 
 	botCfg := app.BotConfig{
-		UpdateTimeout: 60,
+		UpdateTimeout:      60,
+		InlineQueryEnabled: cfg.InlineMode,
 	}
 	bot, err := app.NewBot(
 		botCfg,
