@@ -64,20 +64,28 @@ func (b *Bot) Start(ctx context.Context) {
 			}
 
 			if !update.Message.IsCommand() {
-				// echo
-				log.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
+				command, ok := parseCommand(update.Message.Text, b.Self.UserName)
+				if ok {
+					// Create a new update with the parsed command
+					cmdUpdate := update
+					cmdUpdate.Message.Text = "/" + command
+					cmdUpdate.Message.Entities = []tgbotapi.MessageEntity{
+						{
+							Type:   "bot_command",
+							Offset: 0,
+							Length: len(command) + 1,
+						},
+					}
+					if err := b.handleCommand(ctx, cmdUpdate); err != nil {
+						log.Printf("ERROR handling command: %s", err)
+					}
 
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, update.Message.Text)
-				msg.ReplyToMessageID = update.Message.MessageID
-
-				if _, err := b.Send(msg); err != nil {
-					log.Printf("ERROR send faiiled: %s", err)
+					continue
 				}
-				continue
 			}
 
 			if err := b.handleCommand(ctx, update); err != nil {
-				log.Printf("ERROR send failed: %s", err)
+				log.Printf("ERROR handling command: %s", err)
 			}
 
 		case <-ctx.Done():
@@ -220,4 +228,12 @@ func (b *Bot) handleInlineQuery(update tgbotapi.Update) error {
 
 	_, err := b.Request(inlineConf)
 	return err
+}
+
+func parseCommand(text string, botUsername string) (string, bool) {
+	prefix := "@" + botUsername + " /"
+	if strings.HasPrefix(text, prefix) {
+		return strings.TrimPrefix(text, prefix), true
+	}
+	return "", false
 }
