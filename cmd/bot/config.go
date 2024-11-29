@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/agalitsyn/telegram-tasks-bot/pkg/flagtools"
-	"github.com/agalitsyn/telegram-tasks-bot/pkg/secret"
+	"github.com/agalitsyn/flagutils"
+	"github.com/agalitsyn/secret"
 
 	"github.com/fatih/color"
 	"github.com/go-pkgz/lgr"
@@ -42,8 +42,8 @@ func ParseFlags() Config {
 	flag.BoolVar(&cfg.runPrintVersion, "version", false, "Show version.")
 	flag.BoolVar(&cfg.runMigrate, "migrate", false, "Migrate.")
 
-	flagtools.Prefix = EnvPrefix
-	flagtools.Parse()
+	flagutils.Prefix = EnvPrefix
+	flagutils.Parse()
 	flag.Parse()
 
 	cfg.Token = secret.NewString(*token)

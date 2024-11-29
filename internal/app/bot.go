@@ -100,6 +100,8 @@ func (b *Bot) handleCommand(ctx context.Context, update tgbotapi.Update) error {
 	switch command {
 	case "start":
 		return b.startCommand(ctx, update)
+	case "rename_project":
+		return b.renameProjectCommand(ctx, update)
 	case "status":
 		return b.statusCommand(update)
 	case "help":
@@ -228,6 +230,10 @@ func (b *Bot) handleInlineQuery(update tgbotapi.Update) error {
 
 	_, err := b.Request(inlineConf)
 	return err
+}
+
+func (b *Bot) renameProjectCommand(ctx context.Context, update tgbotapi.Update) error {
+	return nil
 }
 
 func parseCommand(text string, botUsername string) (string, bool) {

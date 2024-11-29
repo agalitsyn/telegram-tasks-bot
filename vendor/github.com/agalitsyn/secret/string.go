@@ -37,7 +37,10 @@ func NewString(v string) String {
 
 // String returns masked string
 func (s String) String() string {
-	return maskedString
+	if s.value != "" {
+		return maskedString
+	}
+	return ""
 }
 
 // Unmask returns real value
