@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/agalitsyn/telegram-tasks-bot/internal/model"
-	"github.com/agalitsyn/telegram-tasks-bot/pkg/version"
+	"github.com/agalitsyn/telegram-tasks-bot/version"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 

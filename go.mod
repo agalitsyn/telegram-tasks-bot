@@ -5,10 +5,10 @@ go 1.23.3
 require (
 	github.com/agalitsyn/flagutils v0.0.0-20241129164643-e6a894e3200f
 	github.com/agalitsyn/secret v0.0.0-20241129165354-e8af913d2d50
+	github.com/agalitsyn/sqlite v0.0.0-20241130101714-e0774e1a8f31
 	github.com/fatih/color v1.17.0
 	github.com/go-pkgz/lgr v0.11.1
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
-	modernc.org/sqlite v1.33.1
 )
 
 require (
@@ -24,6 +24,7 @@ require (
 	modernc.org/libc v1.55.3 // indirect
 	modernc.org/mathutil v1.6.0 // indirect
 	modernc.org/memory v1.8.0 // indirect
+	modernc.org/sqlite v1.34.1 // indirect
 	modernc.org/strutil v1.2.0 // indirect
 	modernc.org/token v1.1.0 // indirect
 )

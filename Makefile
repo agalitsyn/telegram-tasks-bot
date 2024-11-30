@@ -4,7 +4,7 @@ export PATH := $(GOBIN):$(PATH)
 GIT_TAG := $(shell git describe --tags --always --abbrev=0)
 
 BUILD_ARGS ?= -ldflags \
-	"-X github.com/agalitsyn/telegram-tasks-bot/pkg/version.Tag=$(GIT_TAG)"
+	"-X github.com/agalitsyn/telegram-tasks-bot/version.Tag=$(GIT_TAG)"
 
 ifneq (,$(wildcard ./.env))
     include .env

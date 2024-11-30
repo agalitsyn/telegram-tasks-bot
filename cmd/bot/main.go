@@ -8,11 +8,11 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/agalitsyn/sqlite"
 	"github.com/agalitsyn/telegram-tasks-bot/internal/app"
 	sqliteStorage "github.com/agalitsyn/telegram-tasks-bot/internal/storage/sqlite"
 	"github.com/agalitsyn/telegram-tasks-bot/migrations"
-	"github.com/agalitsyn/telegram-tasks-bot/pkg/sqlite"
-	"github.com/agalitsyn/telegram-tasks-bot/pkg/version"
+	"github.com/agalitsyn/telegram-tasks-bot/version"
 )
 
 func main() {
@@ -37,7 +37,7 @@ func main() {
 	}
 	defer db.Close()
 
-	if err = sqlite.MigrateUp(db, migrations.FS, "."); err != nil {
+	if err = sqlite.MigrateUp(db, migrations.FS); err != nil {
 		log.Printf("ERROR could not apply migrations: %s", err)
 		return
 	}
