@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/agalitsyn/sqlite"
+
 	"github.com/agalitsyn/telegram-tasks-bot/internal/app"
 	sqliteStorage "github.com/agalitsyn/telegram-tasks-bot/internal/storage/sqlite"
 	"github.com/agalitsyn/telegram-tasks-bot/migrations"
@@ -50,12 +51,10 @@ func main() {
 	projectStorage := sqliteStorage.NewProjectStorage(db)
 	userStorage := sqliteStorage.NewUserStorage(db)
 
-	botCfg := app.BotConfig{
-		UpdateTimeout:      60,
-		InlineQueryEnabled: cfg.InlineMode,
-	}
 	bot, err := app.NewBot(
-		botCfg,
+		app.BotConfig{
+			UpdateTimeout: 60,
+		},
 		cfg.Token.Unmask(),
 		log.Default(),
 		projectStorage,
@@ -66,9 +65,9 @@ func main() {
 		return
 	}
 	if cfg.Debug {
-		bot.Debug = true
+		bot.SetDebug(true)
 	}
 
-	log.Printf("INFO starting with authorized account %s", bot.Self.UserName)
+	log.Printf("INFO starting with authorized account %s", bot.GetSelf().UserName)
 	bot.Start(ctx)
 }

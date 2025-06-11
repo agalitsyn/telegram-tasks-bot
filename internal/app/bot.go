@@ -7,18 +7,20 @@ import (
 	"log"
 	"strings"
 
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+
 	"github.com/agalitsyn/telegram-tasks-bot/internal/model"
 	"github.com/agalitsyn/telegram-tasks-bot/version"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type BotConfig struct {
-	UpdateTimeout      int
-	InlineQueryEnabled bool
+	UpdateTimeout int
 }
 
 type Bot struct {
-	*tgbotapi.BotAPI
+	api *tgbotapi.BotAPI
 
 	cfg            BotConfig
 	projectStorage model.ProjectRepository
@@ -38,23 +40,23 @@ func NewBot(
 	}
 	tgbotapi.SetLogger(logger)
 	return &Bot{
+		api:            bot,
 		cfg:            cfg,
 		projectStorage: projectStorage,
 		userStorage:    userStorage,
-		BotAPI:         bot,
 	}, nil
 }
 
 func (b *Bot) Start(ctx context.Context) {
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = b.cfg.UpdateTimeout
-	updates := b.GetUpdatesChan(u)
+	updates := b.api.GetUpdatesChan(u)
 	for {
 		select {
 		case update := <-updates:
-			if update.InlineQuery != nil && b.cfg.InlineQueryEnabled {
-				if err := b.handleInlineQuery(update); err != nil {
-					log.Printf("ERROR handling inline query: %s", err)
+			if update.CallbackQuery != nil {
+				if err := b.handleCallbackQuery(ctx, update); err != nil {
+					log.Printf("ERROR handling callback query: %s", err)
 				}
 				continue
 			}
@@ -64,7 +66,7 @@ func (b *Bot) Start(ctx context.Context) {
 			}
 
 			if !update.Message.IsCommand() {
-				command, ok := parseCommand(update.Message.Text, b.Self.UserName)
+				command, ok := parseCommand(update.Message.Text, b.api.Self.UserName)
 				if ok {
 					// Create a new update with the parsed command
 					cmdUpdate := update
@@ -99,7 +101,9 @@ func (b *Bot) handleCommand(ctx context.Context, update tgbotapi.Update) error {
 	command := update.Message.Command()
 	switch command {
 	case "start":
-		return b.startCommand(ctx, update)
+		return b.helpCommand(update)
+	case "create_project":
+		return b.createProjectCommand(ctx, update)
 	case "rename_project":
 		return b.renameProjectCommand(ctx, update)
 	case "status":
@@ -108,35 +112,24 @@ func (b *Bot) handleCommand(ctx context.Context, update tgbotapi.Update) error {
 		return b.helpCommand(update)
 	default:
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Незнакомая команда.")
-		_, err := b.Send(msg)
+		_, err := b.api.Send(msg)
 		return err
 	}
 }
 
 func (b *Bot) helpCommand(update tgbotapi.Update) error {
-	tpl := `Трекер задач
-
-	Создать проект /start
-	Создать задачу /create_task
-	Статус /status
-	Помощь /help
-
-	---
-	Версия: %s`
-
-	text := fmt.Sprintf(tpl, version.String())
-	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text)
-	_, err := b.Send(msg)
-	return err
+	return b.showMainMenu(update.Message.Chat.ID, update.Message.MessageID)
 }
 
 func (b *Bot) statusCommand(update tgbotapi.Update) error {
-	msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Работаю.")
-	_, err := b.Send(msg)
+	statusText := fmt.Sprintf("🤖 *Статус бота*\n\n✅ Работаю\n📊 Версия: %s", version.String())
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, statusText)
+	msg.ParseMode = "Markdown"
+	_, err := b.api.Send(msg)
 	return err
 }
 
-func (b *Bot) startCommand(ctx context.Context, update tgbotapi.Update) error {
+func (b *Bot) createProjectCommand(ctx context.Context, update tgbotapi.Update) error {
 	tgChatID := update.Message.Chat.ID
 	prj, err := b.projectStorage.FetchProjectByChatID(ctx, update.Message.Chat.ID)
 	if err != nil && errors.Is(err, model.ErrProjectNotFound) {
@@ -199,41 +192,30 @@ func (b *Bot) startCommand(ctx context.Context, update tgbotapi.Update) error {
 	var text string
 	if userAdded {
 		text = fmt.Sprintf(
-			"✨ вы добавлены в проект \"%s\" с ролью %s",
-			prj.Title, strings.Title(user.Role.StringLocalized()),
+			"✨ Вы добавлены в проект \"%s\" с ролью `%s`",
+			prj.Title, cases.Title(language.Russian).String(user.Role.StringLocalized()),
 		)
 	} else {
 		text = fmt.Sprintf(
-			"🚀 вы уже состоите в проекте \"%s\" с ролью %s",
-			prj.Title, strings.Title(user.Role.StringLocalized()),
+			"🚀 Вы уже состоите в проекте \"%s\" с ролью `%s`",
+			prj.Title, cases.Title(language.Russian).String(user.Role.StringLocalized()),
 		)
 	}
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text)
-	_, err = b.Send(msg)
-	return err
-}
-
-func (b *Bot) handleInlineQuery(update tgbotapi.Update) error {
-	// TODO: this is example handler
-
-	query := update.InlineQuery.Query
-	log.Printf("DEBUG inline query: %s", query)
-
-	result := tgbotapi.NewInlineQueryResultArticle(update.InlineQuery.ID, "Inline title", "Message content")
-	result.Description = "Inline Description"
-
-	inlineConf := tgbotapi.InlineConfig{
-		InlineQueryID: update.InlineQuery.ID,
-		Results:       []interface{}{result},
-		CacheTime:     300,
-	}
-
-	_, err := b.Request(inlineConf)
+	_, err = b.api.Send(msg)
 	return err
 }
 
 func (b *Bot) renameProjectCommand(ctx context.Context, update tgbotapi.Update) error {
 	return nil
+}
+
+func (b *Bot) SetDebug(debug bool) {
+	b.api.Debug = debug
+}
+
+func (b *Bot) GetSelf() tgbotapi.User {
+	return b.api.Self
 }
 
 func parseCommand(text string, botUsername string) (string, bool) {
@@ -242,4 +224,64 @@ func parseCommand(text string, botUsername string) (string, bool) {
 		return strings.TrimPrefix(text, prefix), true
 	}
 	return "", false
+}
+
+func (b *Bot) showMainMenu(chatID int64, messageID int) error {
+	text := fmt.Sprintf("🤖 *Трекер задач*\n\n_Версия: %s_", version.String())
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✨ Создать проект", "cmd_create_project"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📝 Создать задачу", "cmd_create_task"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📊 Статус", "cmd_status"),
+		),
+	)
+
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = keyboard
+
+	_, err := b.api.Send(msg)
+	return err
+}
+
+func (b *Bot) handleCallbackQuery(ctx context.Context, update tgbotapi.Update) error {
+	callback := tgbotapi.NewCallback(update.CallbackQuery.ID, "")
+	if _, err := b.api.Request(callback); err != nil {
+		log.Printf("ERROR answering callback query: %s", err)
+	}
+
+	data := update.CallbackQuery.Data
+	chatID := update.CallbackQuery.Message.Chat.ID
+
+	switch data {
+	case "cmd_create_project":
+		// Create a fake update to call createProjectCommand
+		fakeUpdate := tgbotapi.Update{
+			Message: &tgbotapi.Message{
+				Chat: &tgbotapi.Chat{
+					ID:    chatID,
+					Title: update.CallbackQuery.Message.Chat.Title,
+				},
+				From: update.CallbackQuery.From,
+			},
+		}
+		return b.createProjectCommand(ctx, fakeUpdate)
+	case "cmd_create_task":
+		msg := tgbotapi.NewMessage(chatID, "Функция создания задач пока не реализована.")
+		_, err := b.api.Send(msg)
+		return err
+	case "cmd_status":
+		statusText := fmt.Sprintf("🤖 *Статус бота*\n\n✅ Работаю\n📊 Версия: %s", version.String())
+		msg := tgbotapi.NewMessage(chatID, statusText)
+		msg.ParseMode = "Markdown"
+		_, err := b.api.Send(msg)
+		return err
+	default:
+		return nil
+	}
 }
