@@ -1,3 +1,11 @@
+bot
 bin
 .env
 *.sqlite3
+
+# AI
+.aider*
+*.todo
+**/.claude/settings.local.json
+CLAUDE.local.md
+.mcp.json

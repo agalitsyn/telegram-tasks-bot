@@ -29,8 +29,8 @@ vendor:
 
 include bin-deps.mk
 
-.PHONY: run
-run:
+.PHONY: start
+start:
 	go run -mod=vendor $(CURDIR)/cmd/bot
 
 .PHONY: test-short
