@@ -55,6 +55,10 @@ lint: $(GOLANGCI_BIN)
 generate:
 	go generate ./...
 
+.PHONY: db-migrate
+db-migrate:
+	go run -mod=vendor $(CURDIR)/cmd/bot --migrate
+
 .PHONY: db-reset
 db-reset:
 	mv db.sqlite3 db-prev.sqlite3

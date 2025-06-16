@@ -50,6 +50,7 @@ func main() {
 
 	projectStorage := sqliteStorage.NewProjectStorage(db)
 	userStorage := sqliteStorage.NewUserStorage(db)
+	taskStorage := sqliteStorage.NewTaskStorage(db)
 
 	bot, err := app.NewBot(
 		app.BotConfig{
@@ -59,6 +60,7 @@ func main() {
 		log.Default(),
 		projectStorage,
 		userStorage,
+		taskStorage,
 	)
 	if err != nil {
 		log.Printf("ERROR could not init bot: %s", err)
