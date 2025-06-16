@@ -15,6 +15,8 @@ type Task struct {
 	CreatedBy   int64
 	UpdatedBy   int64
 	Assignee    int64
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 func NewTask(projectID int, title string, createdBy int64) *Task {
@@ -47,6 +49,7 @@ type TaskFilter struct {
 
 type TaskRepository interface {
 	FilterTasks(ctx context.Context, filter TaskFilter) ([]Task, error)
+	GetTaskByID(ctx context.Context, id int) (*Task, error)
 	CreateTask(ctx context.Context, task *Task) error
 	UpdateTask(ctx context.Context, task *Task) error
 	RemoveTask(ctx context.Context, id int) error
