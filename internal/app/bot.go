@@ -94,7 +94,11 @@ func NewBot(
 			Description: "Создать проект и показать главное меню",
 		},
 		{
-			Command:     "help",
+			Command:     "create_task",
+			Description: "Создать новую задачу",
+		},
+		{
+			Command:     "home",
 			Description: "Показать главное меню",
 		},
 		{
@@ -201,12 +205,14 @@ func (b *Bot) handleCommand(ctx context.Context, update tgbotapi.Update) error {
 		return b.startCommand(ctx, update)
 	case "create_project":
 		return b.createProjectCommand(ctx, update)
+	case "create_task":
+		return b.startTaskCreation(ctx, update)
 	case "rename_project":
 		return b.renameProjectCommand(ctx, update)
 	case "status":
 		return b.statusCommand(update)
-	case "help":
-		return b.helpCommand(update)
+	case "home":
+		return b.homeCommand(update)
 	default:
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Незнакомая команда.")
 		_, err := b.api.Send(msg)
@@ -248,7 +254,7 @@ func (b *Bot) startCommand(ctx context.Context, update tgbotapi.Update) error {
 	return err
 }
 
-func (b *Bot) helpCommand(update tgbotapi.Update) error {
+func (b *Bot) homeCommand(update tgbotapi.Update) error {
 	return b.showMainMenuForUser(update.Message.Chat.ID, update.Message.MessageID, update.Message.From.ID)
 }
 
