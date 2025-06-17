@@ -1009,6 +1009,14 @@ func (b *Bot) finalizeTaskCreation(ctx context.Context, update tgbotapi.Update, 
 			return err
 		}
 
+		// Validate deadline is not in the past
+		today := time.Now().Truncate(24 * time.Hour)
+		if deadline.Before(today) {
+			msg := tgbotapi.NewMessage(chatID, "❌ Дедлайн не может быть в прошлом. Выберите будущую дату:")
+			_, err := b.api.Send(msg)
+			return err
+		}
+
 		// Set deadline to end of day
 		task.Deadline = deadline.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
 	}
