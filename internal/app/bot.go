@@ -1033,12 +1033,9 @@ func (b *Bot) showTaskDetails(ctx context.Context, update tgbotapi.Update, taskI
 		}
 	}
 
-	// Build task details text (escape markdown special characters)
+	// Build task details text with new format
 	statusEmoji := getTaskStatusEmoji(task.Status)
-	text := "📋 *Детали задачи*\n\n"
-	text += fmt.Sprintf("*ID:* %d\n", task.ID)
-	text += fmt.Sprintf("*Название:* %s\n", escapeMarkdown(task.Title))
-	text += fmt.Sprintf("*Описание:* %s\n", escapeMarkdown(getDescriptionOrDefault(task.Description)))
+	text := fmt.Sprintf("*Задача \\- %s*\n\n", escapeMarkdown(task.Title))
 	text += fmt.Sprintf("*Статус:* %s %s\n", statusEmoji, string(task.Status))
 
 	if assigneeName != "" {
@@ -1049,6 +1046,14 @@ func (b *Bot) showTaskDetails(ctx context.Context, update tgbotapi.Update, taskI
 
 	if !task.Deadline.IsZero() {
 		text += fmt.Sprintf("*Дедлайн:* %s\n", task.Deadline.Format("02.01.2006 15:04"))
+	}
+
+	// Add description as markdown at the end (no escaping for markdown support)
+	description := getDescriptionOrDefault(task.Description)
+	if description != "Описание отсутствует" {
+		text += "\n" + description
+	} else {
+		text += "\n_Описание отсутствует_"
 	}
 
 	// Build keyboard - determine the correct back button based on context
