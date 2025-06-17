@@ -70,8 +70,7 @@ Migrations are in `migrations/` and run automatically with `--migrate` flag.
 Current commands:
 - `/start` - Initialize project in current chat
 - `/status` - Show project status and members
-- `/help` - Display help message
-- `/rename_project` - (Not implemented yet)
+- `/home` - Display help message
 
 Commands can be sent as:
 - Direct: `/command`
