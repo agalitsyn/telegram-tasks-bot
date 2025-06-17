@@ -1,6 +1,6 @@
 module github.com/agalitsyn/telegram-tasks-bot
 
-go 1.23.3
+go 1.24.2
 
 require (
 	github.com/agalitsyn/flagutils v0.0.0-20241129164643-e6a894e3200f

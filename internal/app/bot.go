@@ -71,6 +71,8 @@ type Bot struct {
 	taskEditState map[int64]*TaskEditState
 	// Project rename state
 	projectRenameState map[int64]bool
+	// Project description editing state
+	projectDescriptionEditState map[int64]bool
 }
 
 func NewBot(
@@ -113,14 +115,15 @@ func NewBot(
 	}
 
 	return &Bot{
-		api:                bot,
-		cfg:                cfg,
-		projectStorage:     projectStorage,
-		userStorage:        userStorage,
-		taskStorage:        taskStorage,
-		taskCreationState:  make(map[int64]*TaskCreationState),
-		taskEditState:      make(map[int64]*TaskEditState),
-		projectRenameState: make(map[int64]bool),
+		api:                         bot,
+		cfg:                         cfg,
+		projectStorage:              projectStorage,
+		userStorage:                 userStorage,
+		taskStorage:                 taskStorage,
+		taskCreationState:           make(map[int64]*TaskCreationState),
+		taskEditState:               make(map[int64]*TaskEditState),
+		projectRenameState:          make(map[int64]bool),
+		projectDescriptionEditState: make(map[int64]bool),
 	}, nil
 }
 
@@ -162,6 +165,14 @@ func (b *Bot) Start(ctx context.Context) {
 			if _, exists := b.projectRenameState[update.Message.From.ID]; exists {
 				if err := b.handleProjectRenameMessage(ctx, update); err != nil {
 					log.Printf("ERROR handling project rename message: %s", err)
+				}
+				continue
+			}
+
+			// Check if user is in project description edit process
+			if _, exists := b.projectDescriptionEditState[update.Message.From.ID]; exists {
+				if err := b.handleProjectDescriptionEditMessage(ctx, update); err != nil {
+					log.Printf("ERROR handling project description edit message: %s", err)
 				}
 				continue
 			}
@@ -529,6 +540,8 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, update tgbotapi.Update) e
 		return b.showProjectManagement(ctx, chatID, update.CallbackQuery.From.ID)
 	case "cmd_rename_project":
 		return b.startProjectRename(ctx, update)
+	case "cmd_edit_project_description":
+		return b.startProjectDescriptionEdit(ctx, update)
 	case "cmd_assign_manager":
 		return b.showAssignManager(ctx, update)
 	case "cmd_delete_project":
@@ -1711,11 +1724,20 @@ func (b *Bot) showProjectManagement(ctx context.Context, chatID int64, userID in
 		return fmt.Errorf("could not fetch project: %w", err)
 	}
 
+	// Build project info text
 	text := fmt.Sprintf("⚙️ *Управление проектом*\n\n*Проект:* %s", escapeMarkdown(project.Title))
+	if project.Description != "" {
+		text += fmt.Sprintf("\n*Описание:* %s", escapeMarkdown(project.Description))
+	} else {
+		text += "\n*Описание:* _Не указано_"
+	}
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("✏️ Переименовать проект", "cmd_rename_project"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📝 Изменить описание", "cmd_edit_project_description"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("👤 Назначить менеджера", "cmd_assign_manager"),
@@ -2046,4 +2068,107 @@ func (b *Bot) deleteProject(ctx context.Context, update tgbotapi.Update) error {
 	confirmMsg.ParseMode = parseMarkdown
 	_, err = b.api.Send(confirmMsg)
 	return err
+}
+
+func (b *Bot) startProjectDescriptionEdit(ctx context.Context, update tgbotapi.Update) error {
+	chatID := update.CallbackQuery.Message.Chat.ID
+	userID := update.CallbackQuery.From.ID
+
+	// Check if user is manager
+	isManager, err := b.isUserManager(ctx, chatID, userID)
+	if err != nil {
+		return fmt.Errorf("could not check user role: %w", err)
+	}
+	if !isManager {
+		msg := tgbotapi.NewMessage(chatID, "❌ У вас нет прав для изменения описания проекта.")
+		_, err := b.api.Send(msg)
+		return err
+	}
+
+	// Get current project
+	project, err := b.projectStorage.FetchProjectByChatID(ctx, chatID)
+	if err != nil {
+		return fmt.Errorf("could not fetch project: %w", err)
+	}
+
+	// Set description edit state
+	b.projectDescriptionEditState[userID] = true
+
+	// Build prompt text
+	var currentDescription string
+	if project.Description != "" {
+		currentDescription = project.Description
+	} else {
+		currentDescription = "не указано"
+	}
+
+	text := fmt.Sprintf("📝 *Изменение описания проекта*\n\n"+
+		"Текущее описание: %s\n\n"+
+		"Введите новое описание проекта (или отправьте '-' чтобы очистить):",
+		escapeMarkdown(currentDescription))
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = parseMarkdown
+	_, err = b.api.Send(msg)
+	return err
+}
+
+func (b *Bot) handleProjectDescriptionEditMessage(ctx context.Context, update tgbotapi.Update) error {
+	chatID := update.Message.Chat.ID
+	userID := update.Message.From.ID
+	newDescription := strings.TrimSpace(update.Message.Text)
+
+	// Handle cancel command
+	if newDescription == "/cancel" || newDescription == "отмена" {
+		delete(b.projectDescriptionEditState, userID)
+		msg := tgbotapi.NewMessage(chatID, "❌ Изменение описания проекта отменено.")
+		_, err := b.api.Send(msg)
+		return err
+	}
+
+	// Get current project
+	project, err := b.projectStorage.FetchProjectByChatID(ctx, chatID)
+	if err != nil {
+		delete(b.projectDescriptionEditState, userID)
+		return fmt.Errorf("could not fetch project: %w", err)
+	}
+
+	oldDescription := project.Description
+	if newDescription == "-" {
+		project.Description = ""
+	} else {
+		project.Description = newDescription
+	}
+
+	// Update project
+	if err := b.projectStorage.UpdateProject(ctx, project); err != nil {
+		delete(b.projectDescriptionEditState, userID)
+		msg := tgbotapi.NewMessage(chatID, "❌ Ошибка при изменении описания проекта.")
+		_, err := b.api.Send(msg)
+		return err
+	}
+
+	// Clean up state
+	delete(b.projectDescriptionEditState, userID)
+
+	// Send confirmation
+	var confirmText string
+	if oldDescription == "" && project.Description != "" {
+		confirmText = fmt.Sprintf("✅ Описание проекта добавлено: %s", escapeMarkdown(project.Description))
+	} else if oldDescription != "" && project.Description == "" {
+		confirmText = "✅ Описание проекта очищено"
+	} else {
+		confirmText = fmt.Sprintf("✅ Описание проекта изменено: %s → %s",
+			escapeMarkdown(getDescriptionOrDefault(oldDescription)),
+			escapeMarkdown(getDescriptionOrDefault(project.Description)))
+	}
+
+	confirmMsg := tgbotapi.NewMessage(chatID, confirmText)
+	confirmMsg.ParseMode = parseMarkdown
+	_, err = b.api.Send(confirmMsg)
+	if err != nil {
+		return err
+	}
+
+	// Show project management menu
+	return b.showProjectManagement(ctx, chatID, userID)
 }
