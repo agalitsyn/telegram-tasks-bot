@@ -916,10 +916,12 @@ func (b *Bot) handleCalendarCallback(ctx context.Context, update tgbotapi.Update
 	chatID := update.CallbackQuery.Message.Chat.ID
 	userID := update.CallbackQuery.From.ID
 
-	// Check if user is in task creation process with deadline step
-	state, exists := b.taskCreationState[userID]
-	if !exists || state.Step != TaskStepDeadline {
-		return nil // Ignore if not in deadline step
+	// Check if user is in task creation process with deadline step OR task editing process with deadline field
+	creationState, inCreation := b.taskCreationState[userID]
+	editState, inEditing := b.taskEditState[userID]
+
+	if (!inCreation || creationState.Step != TaskStepDeadline) && (!inEditing || editState.Field != TaskEditFieldDeadline) {
+		return nil // Ignore if not in deadline step/field
 	}
 
 	parts := strings.Split(data, "_")
@@ -933,13 +935,18 @@ func (b *Bot) handleCalendarCallback(ctx context.Context, update tgbotapi.Update
 		return nil
 
 	case "skip":
-		// Skip deadline and finalize task creation
-		return b.finalizeTaskCreation(ctx, tgbotapi.Update{
-			Message: &tgbotapi.Message{
-				Chat: &tgbotapi.Chat{ID: chatID},
-				From: update.CallbackQuery.From,
-			},
-		}, state, "-")
+		if inCreation {
+			// Skip deadline and finalize task creation
+			return b.finalizeTaskCreation(ctx, tgbotapi.Update{
+				Message: &tgbotapi.Message{
+					Chat: &tgbotapi.Chat{ID: chatID},
+					From: update.CallbackQuery.From,
+				},
+			}, creationState, "-")
+		} else if inEditing {
+			// Clear deadline for task editing
+			return b.clearTaskField(ctx, update, editState.TaskID, TaskEditFieldDeadline)
+		}
 
 	case "month":
 		// Navigate to different month
@@ -978,13 +985,24 @@ func (b *Bot) handleCalendarCallback(ctx context.Context, update tgbotapi.Update
 		deleteMsg := tgbotapi.NewDeleteMessage(chatID, update.CallbackQuery.Message.MessageID)
 		_, _ = b.api.Send(deleteMsg)
 
-		// Finalize task creation with selected date
-		return b.finalizeTaskCreation(ctx, tgbotapi.Update{
-			Message: &tgbotapi.Message{
-				Chat: &tgbotapi.Chat{ID: chatID},
-				From: update.CallbackQuery.From,
-			},
-		}, state, dateStr)
+		if inCreation {
+			// Finalize task creation with selected date
+			return b.finalizeTaskCreation(ctx, tgbotapi.Update{
+				Message: &tgbotapi.Message{
+					Chat: &tgbotapi.Chat{ID: chatID},
+					From: update.CallbackQuery.From,
+				},
+			}, creationState, dateStr)
+		} else if inEditing {
+			// Update task deadline
+			return b.handleTaskEditMessage(ctx, tgbotapi.Update{
+				Message: &tgbotapi.Message{
+					Chat: &tgbotapi.Chat{ID: chatID},
+					From: update.CallbackQuery.From,
+					Text: dateStr,
+				},
+			}, editState)
+		}
 	}
 
 	return nil
@@ -1565,28 +1583,31 @@ func (b *Bot) startFieldEdit(ctx context.Context, update tgbotapi.Update, taskID
 		if !task.Deadline.IsZero() {
 			currentDeadline = task.Deadline.Format("02.01.2006 15:04")
 		}
-		promptFormat := "📅 *Редактирование дедлайна задачи #%d*\n\nТекущий дедлайн: %s\n\n" +
-			"Введите новый дедлайн в формате ДД.ММ.ГГГГ ЧЧ:ММ:"
-		promptText = fmt.Sprintf(promptFormat, taskID, currentDeadline)
+		promptText = fmt.Sprintf("📅 *Редактирование дедлайна задачи #%d*\n\nТекущий дедлайн: %s\n\n"+
+			"Выберите новый дедлайн из календаря ниже или:\n"+
+			"• Введите дату в формате ДД.ММ.ГГГГ (например: 25.12.2024)", taskID, currentDeadline)
 
-		// Add clear button for deadline
-		var keyboardRows [][]tgbotapi.InlineKeyboardButton
-		if !task.Deadline.IsZero() {
-			keyboardRows = append(keyboardRows,
-				tgbotapi.NewInlineKeyboardRow(
-					tgbotapi.NewInlineKeyboardButtonData("🗑 Убрать дедлайн", fmt.Sprintf("clear_field_%d_deadline", taskID)),
-				),
-			)
+		// Create calendar with additional buttons
+		calendar := b.createCalendarKeyboard(time.Now())
+
+		// Replace the "Пропустить дедлайн" button text for editing
+		for i, row := range calendar.InlineKeyboard {
+			for j, button := range row {
+				if button.CallbackData != nil && *button.CallbackData == "cal_skip" {
+					calendar.InlineKeyboard[i][j].Text = "🗑 Убрать дедлайн"
+				}
+			}
 		}
-		keyboardRows = append(keyboardRows,
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", fmt.Sprintf("task_%d", taskID)),
-			),
-		)
-		keyboard := tgbotapi.NewInlineKeyboardMarkup(keyboardRows...)
+
+		// Add back button
+		backRow := []tgbotapi.InlineKeyboardButton{
+			tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", fmt.Sprintf("task_%d", taskID)),
+		}
+		calendar.InlineKeyboard = append(calendar.InlineKeyboard, backRow)
+
 		msg := tgbotapi.NewMessage(chatID, promptText)
 		msg.ParseMode = parseMarkdown
-		msg.ReplyMarkup = keyboard
+		msg.ReplyMarkup = calendar
 		_, err = b.api.Send(msg)
 		return err
 	case TaskEditFieldAssignee:
@@ -1698,9 +1719,25 @@ func (b *Bot) updateTaskField(ctx context.Context, update tgbotapi.Update, state
 			oldValue = "не установлен"
 		}
 
-		// In a real implementation, you'd parse the date properly
-		// For now, we'll skip deadline parsing to keep it simple
-		updatedValue = newValue
+		// Parse the deadline
+		deadline, err := time.Parse("02.01.2006", newValue)
+		if err != nil {
+			msg := tgbotapi.NewMessage(chatID, "❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ (например: 25.12.2024):")
+			_, err := b.api.Send(msg)
+			return err
+		}
+
+		// Validate deadline is not in the past
+		today := time.Now().Truncate(24 * time.Hour)
+		if deadline.Before(today) {
+			msg := tgbotapi.NewMessage(chatID, "❌ Дедлайн не может быть в прошлом. Выберите будущую дату:")
+			_, err := b.api.Send(msg)
+			return err
+		}
+
+		// Set deadline to end of day
+		task.Deadline = deadline.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+		updatedValue = task.Deadline.Format("02.01.2006 15:04")
 
 	case TaskEditFieldAssignee:
 		fieldName = "исполнитель"
