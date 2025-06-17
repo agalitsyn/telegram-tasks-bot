@@ -91,7 +91,7 @@ func NewBot(
 	commands := []tgbotapi.BotCommand{
 		{
 			Command:     "start",
-			Description: "Создать проект и показать главное меню",
+			Description: "Создать проект",
 		},
 		{
 			Command:     "create_task",
@@ -210,9 +210,9 @@ func (b *Bot) handleCommand(ctx context.Context, update tgbotapi.Update) error {
 	case "rename_project":
 		return b.renameProjectCommand(ctx, update)
 	case "status":
-		return b.statusCommand(update)
+		return b.statusCommand(ctx, update)
 	case "home":
-		return b.homeCommand(update)
+		return b.homeCommand(ctx, update)
 	default:
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Незнакомая команда.")
 		_, err := b.api.Send(msg)
@@ -225,10 +225,17 @@ func (b *Bot) startCommand(ctx context.Context, update tgbotapi.Update) error {
 	userID := update.Message.From.ID
 
 	// Check if project already exists
-	_, err := b.projectStorage.FetchProjectByChatID(ctx, chatID)
+	prj, err := b.projectStorage.FetchProjectByChatID(ctx, chatID)
 	if err == nil {
-		// Project exists, show main menu
-		return b.showMainMenuForUser(chatID, update.Message.MessageID, userID)
+		statusText := fmt.Sprintf("✅ Проект \"%s\" уже создан, воспользуйтесь главным меню.", prj.Title)
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, statusText)
+		msg.ParseMode = parseMarkdown
+		_, err = b.api.Send(msg)
+		if err != nil {
+			return err
+		}
+		// Project exists, show message and redirect to main menu
+		return b.showMainMenuForUser(ctx, chatID, userID)
 	}
 
 	if !errors.Is(err, model.ErrProjectNotFound) {
@@ -254,11 +261,20 @@ func (b *Bot) startCommand(ctx context.Context, update tgbotapi.Update) error {
 	return err
 }
 
-func (b *Bot) homeCommand(update tgbotapi.Update) error {
-	return b.showMainMenuForUser(update.Message.Chat.ID, update.Message.MessageID, update.Message.From.ID)
+func (b *Bot) homeCommand(ctx context.Context, update tgbotapi.Update) error {
+	_, err := b.projectStorage.FetchProjectByChatID(ctx, update.Message.Chat.ID)
+	if err != nil {
+		if errors.Is(err, model.ErrProjectNotFound) {
+			// Project not exists, start creating
+			return b.startCommand(ctx, update)
+		}
+		return err
+	}
+
+	return b.showMainMenuForUser(ctx, update.Message.Chat.ID, update.Message.From.ID)
 }
 
-func (b *Bot) statusCommand(update tgbotapi.Update) error {
+func (b *Bot) statusCommand(ctx context.Context, update tgbotapi.Update) error {
 	statusText := fmt.Sprintf("🤖 *Статус*\n\n✅ Работаю\n📊 Версия: %s", version.String())
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, statusText)
 	msg.ParseMode = parseMarkdown
@@ -354,7 +370,7 @@ func (b *Bot) createProjectCommand(ctx context.Context, update tgbotapi.Update) 
 	}
 
 	// Show main menu after project creation
-	return b.showMainMenuForUser(update.Message.Chat.ID, 0, update.Message.From.ID)
+	return b.showMainMenuForUser(ctx, update.Message.Chat.ID, update.Message.From.ID)
 }
 
 func (b *Bot) renameProjectCommand(ctx context.Context, update tgbotapi.Update) error {
@@ -377,24 +393,15 @@ func parseCommand(text string, botUsername string) (string, bool) {
 	return "", false
 }
 
-func (b *Bot) showMainMenuForUser(chatID int64, messageID int, userID int64) error {
-	ctx := context.Background()
-	text := fmt.Sprintf("🤖 *Трекер задач*\n\n_Версия: %s_", version.String())
+func (b *Bot) showMainMenuForUser(ctx context.Context, chatID int64, userID int64) error {
+	prj, err := b.projectStorage.FetchProjectByChatID(ctx, chatID)
+	if err != nil {
+		return err
+	}
+
+	text := fmt.Sprintf("🤖 *Трекер задач проекта \"%s\"*", prj.Title)
 
 	var keyboardRows [][]tgbotapi.InlineKeyboardButton
-
-	// Check if project exists for this chat
-	_, err := b.projectStorage.FetchProjectByChatID(ctx, chatID)
-	projectExists := err == nil
-
-	// Show "Создать проект" button only if project doesn't exist
-	if !projectExists {
-		keyboardRows = append(keyboardRows,
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("✨ Создать проект", "cmd_create_project"),
-			),
-		)
-	}
 
 	// Always show these buttons
 	keyboardRows = append(keyboardRows,
@@ -424,7 +431,7 @@ func (b *Bot) showMainMenuForUser(chatID int64, messageID int, userID int64) err
 	// Always show status button
 	keyboardRows = append(keyboardRows,
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📊 Статус", "cmd_status"),
+			tgbotapi.NewInlineKeyboardButtonData("📊 Статус бота", "cmd_status"),
 		),
 	)
 
@@ -494,7 +501,7 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, update tgbotapi.Update) e
 		}
 		return b.showProjectTasks(ctx, fakeUpdate)
 	case "cmd_back_to_menu":
-		return b.showMainMenuForUser(chatID, update.CallbackQuery.Message.MessageID, update.CallbackQuery.From.ID)
+		return b.showMainMenuForUser(ctx, chatID, update.CallbackQuery.From.ID)
 	case "cmd_status":
 		statusText := fmt.Sprintf("🤖 *Статус*\n\n✅ Работаю\n📊 Версия: %s", version.String())
 		msg := tgbotapi.NewMessage(chatID, statusText)
@@ -766,7 +773,7 @@ func (b *Bot) finalizeTaskCreation(ctx context.Context, update tgbotapi.Update, 
 	}
 
 	// Show main menu after successful task creation
-	return b.showMainMenuForUser(chatID, 0, userID)
+	return b.showMainMenuForUser(ctx, chatID, userID)
 }
 
 func getDescriptionOrDefault(description string) string {
@@ -1863,6 +1870,7 @@ func (b *Bot) confirmDeleteProject(ctx context.Context, update tgbotapi.Update) 
 	_, err = b.api.Send(msg)
 	return err
 }
+
 func (b *Bot) promoteToManager(ctx context.Context, update tgbotapi.Update, targetUserID int) error {
 	chatID := update.CallbackQuery.Message.Chat.ID
 	userID := update.CallbackQuery.From.ID
