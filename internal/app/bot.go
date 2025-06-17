@@ -669,7 +669,11 @@ func (b *Bot) handleTaskCreationMessage(ctx context.Context, update tgbotapi.Upd
 			state.Description = text
 		}
 		state.Step = TaskStepAssignee
-		msg := tgbotapi.NewMessage(chatID, "👤 Шаг 3/3: Назначьте исполнителя с помощью @упоминания (или отправьте '-' чтобы пропустить):")
+		assigneePrompt := "👤 Шаг 3/3: Назначьте исполнителя:\n" +
+			"• @username - для другого пользователя\n" +
+			"• 'me' или 'я' - назначить себе\n" +
+			"• '-' - пропустить"
+		msg := tgbotapi.NewMessage(chatID, assigneePrompt)
 		_, err := b.api.Send(msg)
 		return err
 
@@ -692,47 +696,64 @@ func (b *Bot) finalizeTaskCreation(ctx context.Context, update tgbotapi.Update, 
 	// Handle assignee if provided
 	var assigneeName string
 	if assigneeText != "-" && assigneeText != "" {
-		// Extract @mention using regex
-		mentionRegex := regexp.MustCompile(`@(\w+)`)
-		matches := mentionRegex.FindStringSubmatch(assigneeText)
-		if len(matches) > 1 {
-			username := matches[1]
-
-			// Don't allow assigning to bot
-			if username == b.api.Self.UserName {
-				msg := tgbotapi.NewMessage(chatID, "❌ Нельзя назначить задачу боту. Назначьте другого исполнителя:")
-				_, err := b.api.Send(msg)
-				return err
+		// Check if it's a self-assignment shortcut
+		if isSelfAssignment(assigneeText) {
+			// Get current user
+			currentUser, err := b.userStorage.FetchUserByTgID(ctx, userID)
+			if err != nil {
+				return fmt.Errorf("could not fetch current user: %w", err)
 			}
 
-			// Try to find user by username in the project
-			assigneeUser, err := b.userStorage.FetchUserByUsername(ctx, username)
-			if err != nil {
-				if errors.Is(err, model.ErrUserNotFound) {
-					msg := tgbotapi.NewMessage(chatID,
-						fmt.Sprintf("❌ Пользователь @%s не найден. Убедитесь, что пользователь добавлен в проект.", username))
+			task.Assignee = int64(currentUser.ID)
+			assigneeName = currentUser.FullName
+			if assigneeName == "" && currentUser.Username != "" {
+				assigneeName = "@" + currentUser.Username
+			} else if assigneeName == "" {
+				assigneeName = "Вы"
+			}
+		} else {
+			// Extract @mention using regex
+			mentionRegex := regexp.MustCompile(`@(\w+)`)
+			matches := mentionRegex.FindStringSubmatch(assigneeText)
+			if len(matches) > 1 {
+				username := matches[1]
+
+				// Don't allow assigning to bot
+				if username == b.api.Self.UserName {
+					msg := tgbotapi.NewMessage(chatID, "❌ Нельзя назначить задачу боту. Назначьте другого исполнителя:")
 					_, err := b.api.Send(msg)
 					return err
 				}
-				return fmt.Errorf("could not fetch user by username: %w", err)
-			}
 
-			// Check if user is in the project
-			_, err = b.userStorage.FetchUserRoleInProject(ctx, state.ProjectID, assigneeUser.ID)
-			if err != nil {
-				if errors.Is(err, model.ErrUserNotFound) {
-					msg := tgbotapi.NewMessage(chatID,
-						fmt.Sprintf("❌ Пользователь @%s не является участником проекта.", username))
-					_, err := b.api.Send(msg)
-					return err
+				// Try to find user by username in the project
+				assigneeUser, err := b.userStorage.FetchUserByUsername(ctx, username)
+				if err != nil {
+					if errors.Is(err, model.ErrUserNotFound) {
+						msg := tgbotapi.NewMessage(chatID,
+							fmt.Sprintf("❌ Пользователь @%s не найден. Убедитесь, что пользователь добавлен в проект.", username))
+						_, err := b.api.Send(msg)
+						return err
+					}
+					return fmt.Errorf("could not fetch user by username: %w", err)
 				}
-				return fmt.Errorf("could not check user role: %w", err)
-			}
 
-			task.Assignee = int64(assigneeUser.ID)
-			assigneeName = assigneeUser.FullName
-			if assigneeName == "" {
-				assigneeName = "@" + username
+				// Check if user is in the project
+				_, err = b.userStorage.FetchUserRoleInProject(ctx, state.ProjectID, assigneeUser.ID)
+				if err != nil {
+					if errors.Is(err, model.ErrUserNotFound) {
+						msg := tgbotapi.NewMessage(chatID,
+							fmt.Sprintf("❌ Пользователь @%s не является участником проекта.", username))
+						_, err := b.api.Send(msg)
+						return err
+					}
+					return fmt.Errorf("could not check user role: %w", err)
+				}
+
+				task.Assignee = int64(assigneeUser.ID)
+				assigneeName = assigneeUser.FullName
+				if assigneeName == "" {
+					assigneeName = "@" + username
+				}
 			}
 		}
 	}
@@ -790,6 +811,22 @@ func escapeMarkdown(text string) string {
 	text = strings.ReplaceAll(text, "`", "\\`")
 	text = strings.ReplaceAll(text, "[", "\\[")
 	return text
+}
+
+func isSelfAssignment(text string) bool {
+	// Check if the text is a self-assignment shortcut
+	selfShortcuts := []string{
+		"me", "self", "myself", // English
+		"я", "мне", "мое", "себе", // Russian
+	}
+
+	lowercaseText := strings.ToLower(strings.TrimSpace(text))
+	for _, shortcut := range selfShortcuts {
+		if lowercaseText == shortcut {
+			return true
+		}
+	}
+	return false
 }
 
 func filterRecentTasks(tasks []model.Task) []model.Task {
@@ -1282,7 +1319,7 @@ func (b *Bot) startFieldEdit(ctx context.Context, update tgbotapi.Update, taskID
 			currentAssignee = "не назначен"
 		}
 		promptFormat := "👤 *Редактирование исполнителя задачи #%d*\n\nТекущий исполнитель: %s\n\n" +
-			"Введите @упоминание нового исполнителя:"
+			"Введите:\n• @username - для другого пользователя\n• 'me' или 'я' - назначить себе"
 		promptText = fmt.Sprintf(promptFormat, taskID, currentAssignee)
 
 		// Add clear button for assignee
@@ -1397,31 +1434,12 @@ func (b *Bot) updateTaskField(ctx context.Context, update tgbotapi.Update, state
 			oldValue = "не назначен"
 		}
 
-		// Extract @mention using regex
-		mentionRegex := regexp.MustCompile(`@(\w+)`)
-		matches := mentionRegex.FindStringSubmatch(newValue)
-		if len(matches) > 1 {
-			username := matches[1]
-
-			// Don't allow assigning to bot
-			if username == b.api.Self.UserName {
-				delete(b.taskEditState, userID)
-				msg := tgbotapi.NewMessage(chatID, "❌ Нельзя назначить задачу боту.")
-				_, err := b.api.Send(msg)
-				return err
-			}
-
-			// Find user by username
-			assigneeUser, err := b.userStorage.FetchUserByUsername(ctx, username)
+		// Check if it's a self-assignment shortcut
+		if isSelfAssignment(newValue) {
+			// Get current user
+			currentUser, err := b.userStorage.FetchUserByTgID(ctx, userID)
 			if err != nil {
-				if errors.Is(err, model.ErrUserNotFound) {
-					delete(b.taskEditState, userID)
-					msg := tgbotapi.NewMessage(chatID,
-						fmt.Sprintf("❌ Пользователь @%s не найден.", username))
-					_, err := b.api.Send(msg)
-					return err
-				}
-				return fmt.Errorf("could not fetch user by username: %w", err)
+				return fmt.Errorf("could not fetch current user: %w", err)
 			}
 
 			// Get project ID from task
@@ -1431,28 +1449,82 @@ func (b *Bot) updateTaskField(ctx context.Context, update tgbotapi.Update, state
 			}
 
 			// Check if user is in the project
-			_, err = b.userStorage.FetchUserRoleInProject(ctx, projectTask.ProjectID, assigneeUser.ID)
+			_, err = b.userStorage.FetchUserRoleInProject(ctx, projectTask.ProjectID, currentUser.ID)
 			if err != nil {
 				if errors.Is(err, model.ErrUserNotFound) {
 					delete(b.taskEditState, userID)
-					msg := tgbotapi.NewMessage(chatID,
-						fmt.Sprintf("❌ Пользователь @%s не является участником проекта.", username))
+					msg := tgbotapi.NewMessage(chatID, "❌ Вы не являетесь участником проекта.")
 					_, err := b.api.Send(msg)
 					return err
 				}
 				return fmt.Errorf("could not check user role: %w", err)
 			}
 
-			task.Assignee = int64(assigneeUser.ID)
-			updatedValue = assigneeUser.FullName
-			if updatedValue == "" {
-				updatedValue = "@" + username
+			task.Assignee = int64(currentUser.ID)
+			updatedValue = currentUser.FullName
+			if updatedValue == "" && currentUser.Username != "" {
+				updatedValue = "@" + currentUser.Username
+			} else if updatedValue == "" {
+				updatedValue = "Вы"
 			}
 		} else {
-			// Invalid format
-			msg := tgbotapi.NewMessage(chatID, "❌ Неверный формат. Используйте @username")
-			_, err := b.api.Send(msg)
-			return err
+			// Extract @mention using regex
+			mentionRegex := regexp.MustCompile(`@(\w+)`)
+			matches := mentionRegex.FindStringSubmatch(newValue)
+			if len(matches) > 1 {
+				username := matches[1]
+
+				// Don't allow assigning to bot
+				if username == b.api.Self.UserName {
+					delete(b.taskEditState, userID)
+					msg := tgbotapi.NewMessage(chatID, "❌ Нельзя назначить задачу боту.")
+					_, err := b.api.Send(msg)
+					return err
+				}
+
+				// Find user by username
+				assigneeUser, err := b.userStorage.FetchUserByUsername(ctx, username)
+				if err != nil {
+					if errors.Is(err, model.ErrUserNotFound) {
+						delete(b.taskEditState, userID)
+						msg := tgbotapi.NewMessage(chatID,
+							fmt.Sprintf("❌ Пользователь @%s не найден.", username))
+						_, err := b.api.Send(msg)
+						return err
+					}
+					return fmt.Errorf("could not fetch user by username: %w", err)
+				}
+
+				// Get project ID from task
+				projectTask, err := b.taskStorage.GetTaskByID(ctx, state.TaskID)
+				if err != nil {
+					return fmt.Errorf("could not get task project: %w", err)
+				}
+
+				// Check if user is in the project
+				_, err = b.userStorage.FetchUserRoleInProject(ctx, projectTask.ProjectID, assigneeUser.ID)
+				if err != nil {
+					if errors.Is(err, model.ErrUserNotFound) {
+						delete(b.taskEditState, userID)
+						msg := tgbotapi.NewMessage(chatID,
+							fmt.Sprintf("❌ Пользователь @%s не является участником проекта.", username))
+						_, err := b.api.Send(msg)
+						return err
+					}
+					return fmt.Errorf("could not check user role: %w", err)
+				}
+
+				task.Assignee = int64(assigneeUser.ID)
+				updatedValue = assigneeUser.FullName
+				if updatedValue == "" {
+					updatedValue = "@" + username
+				}
+			} else {
+				// Invalid format
+				msg := tgbotapi.NewMessage(chatID, "❌ Неверный формат. Используйте @username или 'me'/'я'")
+				_, err := b.api.Send(msg)
+				return err
+			}
 		}
 	}
 
@@ -1649,7 +1721,7 @@ func (b *Bot) showProjectManagement(ctx context.Context, chatID int64, userID in
 			tgbotapi.NewInlineKeyboardButtonData("👤 Назначить менеджера", "cmd_assign_manager"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🗑 Удалить проект", "cmd_delete_project"),
+			tgbotapi.NewInlineKeyboardButtonData("❌ Удалить проект", "cmd_delete_project"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "cmd_back_to_menu"),
