@@ -34,6 +34,7 @@ const (
 	TaskStepTitle TaskCreationStep = iota
 	TaskStepDescription
 	TaskStepAssignee
+	TaskStepDeadline
 )
 
 type TaskEditField string
@@ -52,6 +53,7 @@ type TaskCreationState struct {
 	Title       string
 	Description string
 	CreatedBy   int64
+	Assignee    int64
 }
 
 type TaskEditState struct {
@@ -596,6 +598,11 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, update tgbotapi.Update) e
 	case "cmd_delete_project":
 		return b.confirmDeleteProject(ctx, update)
 	default:
+		// Handle calendar button clicks
+		if strings.HasPrefix(data, "cal_") {
+			return b.handleCalendarCallback(ctx, update, data)
+		}
+
 		// Handle task button clicks (format: task_<id>)
 		if strings.HasPrefix(data, "task_") {
 			taskIDStr := strings.TrimPrefix(data, "task_")
@@ -694,7 +701,7 @@ func (b *Bot) startTaskCreation(ctx context.Context, update tgbotapi.Update) err
 		CreatedBy: userID,
 	}
 
-	msg := tgbotapi.NewMessage(chatID, "📝 *Создание новой задачи*\n\nШаг 1/3: Введите название задачи:")
+	msg := tgbotapi.NewMessage(chatID, "📝 *Создание новой задачи*\n\nШаг 1/4: Введите название задачи:")
 	msg.ParseMode = parseMarkdown
 	_, err = b.api.Send(msg)
 	return err
@@ -722,7 +729,7 @@ func (b *Bot) handleTaskCreationMessage(ctx context.Context, update tgbotapi.Upd
 		}
 		state.Title = text
 		state.Step = TaskStepDescription
-		msg := tgbotapi.NewMessage(chatID, "📄 Шаг 2/3: Введите описание задачи (или отправьте '-' чтобы пропустить):")
+		msg := tgbotapi.NewMessage(chatID, "📄 Шаг 2/4: Введите описание задачи (или отправьте '-' чтобы пропустить):")
 		_, err := b.api.Send(msg)
 		return err
 
@@ -731,7 +738,7 @@ func (b *Bot) handleTaskCreationMessage(ctx context.Context, update tgbotapi.Upd
 			state.Description = text
 		}
 		state.Step = TaskStepAssignee
-		assigneePrompt := "👤 Шаг 3/3: Назначьте исполнителя:\n" +
+		assigneePrompt := "👤 Шаг 3/4: Назначьте исполнителя:\n" +
 			"• @username - для другого пользователя\n" +
 			"• 'me' или 'я' - назначить себе\n" +
 			"• '-' - пропустить"
@@ -740,23 +747,20 @@ func (b *Bot) handleTaskCreationMessage(ctx context.Context, update tgbotapi.Upd
 		return err
 
 	case TaskStepAssignee:
+		return b.handleAssigneeStep(ctx, update, state, text)
+
+	case TaskStepDeadline:
 		return b.finalizeTaskCreation(ctx, update, state, text)
 	}
 
 	return nil
 }
 
-func (b *Bot) finalizeTaskCreation(ctx context.Context, update tgbotapi.Update, state *TaskCreationState, assigneeText string) error {
+func (b *Bot) handleAssigneeStep(ctx context.Context, update tgbotapi.Update, state *TaskCreationState, assigneeText string) error {
 	chatID := update.Message.Chat.ID
 	userID := update.Message.From.ID
 
-	// Create the task
-	task := model.NewTask(state.ProjectID, state.Title, state.CreatedBy)
-	task.Description = state.Description
-	task.Status = model.TaskStatusTODO
-
 	// Handle assignee if provided
-	var assigneeName string
 	if assigneeText != "-" && assigneeText != "" {
 		// Check if it's a self-assignment shortcut
 		if isSelfAssignment(assigneeText) {
@@ -765,14 +769,7 @@ func (b *Bot) finalizeTaskCreation(ctx context.Context, update tgbotapi.Update, 
 			if err != nil {
 				return fmt.Errorf("could not fetch current user: %w", err)
 			}
-
-			task.Assignee = int64(currentUser.ID)
-			assigneeName = currentUser.FullName
-			if assigneeName == "" && currentUser.Username != "" {
-				assigneeName = "@" + currentUser.Username
-			} else if assigneeName == "" {
-				assigneeName = "Вы"
-			}
+			state.Assignee = int64(currentUser.ID)
 		} else {
 			// Extract @mention using regex
 			mentionRegex := regexp.MustCompile(`@(\w+)`)
@@ -811,11 +808,223 @@ func (b *Bot) finalizeTaskCreation(ctx context.Context, update tgbotapi.Update, 
 					return fmt.Errorf("could not check user role: %w", err)
 				}
 
-				task.Assignee = int64(assigneeUser.ID)
-				assigneeName = assigneeUser.FullName
-				if assigneeName == "" {
-					assigneeName = "@" + username
-				}
+				state.Assignee = int64(assigneeUser.ID)
+			}
+		}
+	}
+
+	// Move to deadline step
+	state.Step = TaskStepDeadline
+	return b.showDeadlineSelection(ctx, chatID)
+}
+
+func (b *Bot) showDeadlineSelection(ctx context.Context, chatID int64) error {
+	text := "⏰ Шаг 4/4: Установите дедлайн для задачи:\n\n" +
+		"Выберите дату из календаря ниже или:\n" +
+		"• Введите дату в формате ДД.ММ.ГГГГ (например: 25.12.2024)\n" +
+		"• Введите '-' чтобы пропустить"
+
+	keyboard := b.createCalendarKeyboard(time.Now())
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = keyboard
+	_, err := b.api.Send(msg)
+	return err
+}
+
+func (b *Bot) createCalendarKeyboard(currentMonth time.Time) tgbotapi.InlineKeyboardMarkup {
+	year, month, _ := currentMonth.Date()
+	firstDay := time.Date(year, month, 1, 0, 0, 0, 0, currentMonth.Location())
+	lastDay := firstDay.AddDate(0, 1, -1)
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+
+	// Header with month/year and navigation
+	prevMonth := currentMonth.AddDate(0, -1, 0)
+	nextMonth := currentMonth.AddDate(0, 1, 0)
+
+	monthNames := []string{"", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+		"Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"}
+
+	headerRow := []tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardButtonData("◀", fmt.Sprintf("cal_month_%d_%d", prevMonth.Year(), int(prevMonth.Month()))),
+		tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%s %d", monthNames[int(month)], year), "cal_ignore"),
+		tgbotapi.NewInlineKeyboardButtonData("▶", fmt.Sprintf("cal_month_%d_%d", nextMonth.Year(), int(nextMonth.Month()))),
+	}
+	rows = append(rows, headerRow)
+
+	// Week days header
+	weekDays := []string{"Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"}
+	var weekRow []tgbotapi.InlineKeyboardButton
+	for _, day := range weekDays {
+		weekRow = append(weekRow, tgbotapi.NewInlineKeyboardButtonData(day, "cal_ignore"))
+	}
+	rows = append(rows, weekRow)
+
+	// Calendar days
+	// Start from Monday (1=Monday, 7=Sunday)
+	startDay := int(firstDay.Weekday())
+	if startDay == 0 { // Sunday
+		startDay = 7
+	}
+
+	var currentRow []tgbotapi.InlineKeyboardButton
+
+	// Empty cells before first day
+	for i := 1; i < startDay; i++ {
+		currentRow = append(currentRow, tgbotapi.NewInlineKeyboardButtonData(" ", "cal_ignore"))
+	}
+
+	// Days of the month
+	for day := 1; day <= lastDay.Day(); day++ {
+		dayDate := time.Date(year, month, day, 0, 0, 0, 0, currentMonth.Location())
+
+		// Don't allow selecting past dates
+		today := time.Now().Truncate(24 * time.Hour)
+		if dayDate.Before(today) {
+			currentRow = append(currentRow, tgbotapi.NewInlineKeyboardButtonData("·", "cal_ignore"))
+		} else {
+			currentRow = append(currentRow, tgbotapi.NewInlineKeyboardButtonData(
+				fmt.Sprintf("%d", day),
+				fmt.Sprintf("cal_date_%d_%d_%d", year, int(month), day)))
+		}
+
+		// Complete week row
+		if len(currentRow) == 7 {
+			rows = append(rows, currentRow)
+			currentRow = []tgbotapi.InlineKeyboardButton{}
+		}
+	}
+
+	// Complete last row if needed
+	if len(currentRow) > 0 {
+		for len(currentRow) < 7 {
+			currentRow = append(currentRow, tgbotapi.NewInlineKeyboardButtonData(" ", "cal_ignore"))
+		}
+		rows = append(rows, currentRow)
+	}
+
+	// Skip deadline button
+	skipRow := []tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardButtonData("⏭ Пропустить дедлайн", "cal_skip"),
+	}
+	rows = append(rows, skipRow)
+
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+func (b *Bot) handleCalendarCallback(ctx context.Context, update tgbotapi.Update, data string) error {
+	chatID := update.CallbackQuery.Message.Chat.ID
+	userID := update.CallbackQuery.From.ID
+
+	// Check if user is in task creation process with deadline step
+	state, exists := b.taskCreationState[userID]
+	if !exists || state.Step != TaskStepDeadline {
+		return nil // Ignore if not in deadline step
+	}
+
+	parts := strings.Split(data, "_")
+	if len(parts) < 2 {
+		return nil
+	}
+
+	switch parts[1] {
+	case "ignore":
+		// Do nothing for ignore buttons
+		return nil
+
+	case "skip":
+		// Skip deadline and finalize task creation
+		return b.finalizeTaskCreation(ctx, tgbotapi.Update{
+			Message: &tgbotapi.Message{
+				Chat: &tgbotapi.Chat{ID: chatID},
+				From: update.CallbackQuery.From,
+			},
+		}, state, "-")
+
+	case "month":
+		// Navigate to different month
+		if len(parts) != 4 {
+			return nil
+		}
+		year, err1 := strconv.Atoi(parts[2])
+		month, err2 := strconv.Atoi(parts[3])
+		if err1 != nil || err2 != nil {
+			return nil
+		}
+
+		newMonth := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.Local)
+		newKeyboard := b.createCalendarKeyboard(newMonth)
+
+		edit := tgbotapi.NewEditMessageReplyMarkup(chatID, update.CallbackQuery.Message.MessageID, newKeyboard)
+		_, err := b.api.Send(edit)
+		return err
+
+	case "date":
+		// Date selected
+		if len(parts) != 5 {
+			return nil
+		}
+		year, err1 := strconv.Atoi(parts[2])
+		month, err2 := strconv.Atoi(parts[3])
+		day, err3 := strconv.Atoi(parts[4])
+		if err1 != nil || err2 != nil || err3 != nil {
+			return nil
+		}
+
+		selectedDate := time.Date(year, time.Month(month), day, 23, 59, 59, 0, time.Local)
+		dateStr := selectedDate.Format("02.01.2006")
+
+		// Delete the calendar message
+		deleteMsg := tgbotapi.NewDeleteMessage(chatID, update.CallbackQuery.Message.MessageID)
+		_, _ = b.api.Send(deleteMsg)
+
+		// Finalize task creation with selected date
+		return b.finalizeTaskCreation(ctx, tgbotapi.Update{
+			Message: &tgbotapi.Message{
+				Chat: &tgbotapi.Chat{ID: chatID},
+				From: update.CallbackQuery.From,
+			},
+		}, state, dateStr)
+	}
+
+	return nil
+}
+
+func (b *Bot) finalizeTaskCreation(ctx context.Context, update tgbotapi.Update, state *TaskCreationState, deadlineText string) error {
+	chatID := update.Message.Chat.ID
+	userID := update.Message.From.ID
+
+	// Create the task
+	task := model.NewTask(state.ProjectID, state.Title, state.CreatedBy)
+	task.Description = state.Description
+	task.Status = model.TaskStatusTODO
+	task.Assignee = state.Assignee
+
+	// Handle deadline if provided
+	if deadlineText != "-" && deadlineText != "" {
+		deadline, err := time.Parse("02.01.2006", deadlineText)
+		if err != nil {
+			msg := tgbotapi.NewMessage(chatID, "❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ (например: 25.12.2024):")
+			_, err := b.api.Send(msg)
+			return err
+		}
+
+		// Set deadline to end of day
+		task.Deadline = deadline.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+	}
+
+	// Get assignee name for display
+	var assigneeName string
+	if task.Assignee != 0 {
+		assigneeUser, err := b.userStorage.FetchUserByID(ctx, int(task.Assignee))
+		if err != nil {
+			assigneeName = fmt.Sprintf("ID: %d", task.Assignee)
+		} else {
+			assigneeName = assigneeUser.FullName
+			if assigneeName == "" && assigneeUser.Username != "" {
+				assigneeName = "@" + assigneeUser.Username
+			} else if assigneeName == "" {
+				assigneeName = fmt.Sprintf("ID: %d", task.Assignee)
 			}
 		}
 	}
@@ -834,18 +1043,17 @@ func (b *Bot) finalizeTaskCreation(ctx context.Context, update tgbotapi.Update, 
 	delete(b.taskCreationState, userID)
 
 	// Send confirmation
-	var responseText string
+	responseText := fmt.Sprintf("✅ *Задача создана успешно!*\n\n📝 *Название:* %s\n📄 *Описание:* %s\n📊 *Статус:* %s",
+		task.Title,
+		getDescriptionOrDefault(task.Description),
+		string(task.Status))
+
 	if assigneeName != "" {
-		responseText = fmt.Sprintf("✅ *Задача создана успешно!*\n\n📝 *Название:* %s\n📄 *Описание:* %s\n👤 *Исполнитель:* %s\n📊 *Статус:* %s",
-			task.Title,
-			getDescriptionOrDefault(task.Description),
-			assigneeName,
-			string(task.Status))
-	} else {
-		responseText = fmt.Sprintf("✅ *Задача создана успешно!*\n\n📝 *Название:* %s\n📄 *Описание:* %s\n📊 *Статус:* %s",
-			task.Title,
-			getDescriptionOrDefault(task.Description),
-			string(task.Status))
+		responseText += fmt.Sprintf("\n👤 *Исполнитель:* %s", assigneeName)
+	}
+
+	if !task.Deadline.IsZero() {
+		responseText += fmt.Sprintf("\n⏰ *Дедлайн:* %s", task.Deadline.Format("02.01.2006 15:04"))
 	}
 
 	msg := tgbotapi.NewMessage(chatID, responseText)
@@ -1035,7 +1243,7 @@ func (b *Bot) showTaskDetails(ctx context.Context, update tgbotapi.Update, taskI
 
 	// Build task details text with new format
 	statusEmoji := getTaskStatusEmoji(task.Status)
-	text := fmt.Sprintf("*Задача \\- %s*\n\n", escapeMarkdown(task.Title))
+	text := fmt.Sprintf("*Задача - %s*\n\n", escapeMarkdown(task.Title))
 	text += fmt.Sprintf("*Статус:* %s %s\n", statusEmoji, string(task.Status))
 
 	if assigneeName != "" {
