@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/agalitsyn/flagutils"
 	"github.com/agalitsyn/secret"
@@ -16,8 +18,10 @@ import (
 const EnvPrefix = "TG_TASKS_BOT"
 
 type Config struct {
-	Debug bool
-	Token secret.String
+	Debug        bool
+	Token        secret.String
+	Public       bool
+	AllowedTgIDs []int64
 
 	runPrintVersion bool
 	runMigrate      bool
@@ -37,6 +41,8 @@ func ParseFlags() Config {
 
 	flag.BoolVar(&cfg.Debug, "debug", false, "Debug mode.")
 	token := flag.String("token", "", "Telegram bot token.")
+	public := flag.Bool("public", true, "Allow all users to use the bot.")
+	allowedTgIds := flag.String("allowed-tg-ids", "", "Comma-separated list of allowed Telegram user IDs (only used when public=false).")
 	flag.BoolVar(&cfg.runPrintVersion, "version", false, "Show version.")
 	flag.BoolVar(&cfg.runMigrate, "migrate", false, "Migrate.")
 
@@ -45,7 +51,35 @@ func ParseFlags() Config {
 	flag.Parse()
 
 	cfg.Token = secret.NewString(*token)
+	cfg.Public = *public
+	cfg.AllowedTgIDs = parseAllowedTgIDs(*allowedTgIds)
 	return cfg
+}
+
+func parseAllowedTgIDs(allowedTgIdsStr string) []int64 {
+	if allowedTgIdsStr == "" {
+		return nil
+	}
+
+	parts := strings.Split(allowedTgIdsStr, ",")
+	allowedTgIDs := make([]int64, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		id, err := strconv.ParseInt(part, 10, 64)
+		if err != nil {
+			fmt.Printf("WARNING: invalid Telegram user ID '%s', skipping\n", part)
+			continue
+		}
+
+		allowedTgIDs = append(allowedTgIDs, id)
+	}
+
+	return allowedTgIDs
 }
 
 func setupLogger(debug bool) {

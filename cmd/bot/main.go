@@ -55,6 +55,8 @@ func main() {
 	bot, err := app.NewBot(
 		app.BotConfig{
 			UpdateTimeout: 60,
+			Public:        cfg.Public,
+			AllowedTgIDs:  cfg.AllowedTgIDs,
 		},
 		cfg.Token.Unmask(),
 		log.Default(),

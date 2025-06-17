@@ -20,6 +20,8 @@ import (
 
 type BotConfig struct {
 	UpdateTimeout int
+	Public        bool
+	AllowedTgIDs  []int64
 }
 
 const (
@@ -73,6 +75,35 @@ type Bot struct {
 	projectRenameState map[int64]bool
 	// Project description editing state
 	projectDescriptionEditState map[int64]bool
+}
+
+// CheckUserAccess validates if the user is allowed to use the bot based on access control settings
+func (b *Bot) CheckUserAccess(userID int64) bool {
+	// If public mode is enabled, allow all users
+	if b.cfg.Public {
+		return true
+	}
+
+	// If private mode, check if user is in allowed list
+	for _, allowedID := range b.cfg.AllowedTgIDs {
+		if userID == allowedID {
+			return true
+		}
+	}
+
+	return false
+}
+
+// sendAccessDeniedMessage sends a message to users who don't have access
+func (b *Bot) sendAccessDeniedMessage(chatID int64) error {
+	msg := tgbotapi.NewMessage(chatID, "❌ У вас нет доступа к этому боту.")
+	_, err := b.api.Send(msg)
+	return err
+}
+
+// SetConfig sets the bot configuration (used for testing)
+func (b *Bot) SetConfig(cfg BotConfig) {
+	b.cfg = cfg
 }
 
 func NewBot(
@@ -135,6 +166,14 @@ func (b *Bot) Start(ctx context.Context) {
 		select {
 		case update := <-updates:
 			if update.CallbackQuery != nil {
+				// Check user access permissions for callback queries
+				if !b.CheckUserAccess(update.CallbackQuery.From.ID) {
+					if err := b.sendAccessDeniedMessage(update.CallbackQuery.Message.Chat.ID); err != nil {
+						log.Printf("ERROR sending access denied message: %s", err)
+					}
+					continue
+				}
+
 				if err := b.handleCallbackQuery(ctx, update); err != nil {
 					log.Printf("ERROR handling callback query: %s", err)
 				}
@@ -142,6 +181,14 @@ func (b *Bot) Start(ctx context.Context) {
 			}
 
 			if update.Message == nil { // ignore any non-Message updates
+				continue
+			}
+
+			// Check user access permissions
+			if !b.CheckUserAccess(update.Message.From.ID) {
+				if err := b.sendAccessDeniedMessage(update.Message.Chat.ID); err != nil {
+					log.Printf("ERROR sending access denied message: %s", err)
+				}
 				continue
 			}
 
