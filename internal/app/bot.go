@@ -95,8 +95,10 @@ func (b *Bot) CheckUserAccess(userID int64) bool {
 }
 
 // sendAccessDeniedMessage sends a message to users who don't have access
-func (b *Bot) sendAccessDeniedMessage(chatID int64) error {
-	msg := tgbotapi.NewMessage(chatID, "❌ У вас нет доступа к этому боту.")
+func (b *Bot) sendAccessDeniedMessage(chatID int64, userID int64) error {
+	text := fmt.Sprintf("❌ У вас нет доступа к этому боту.\n\nЗапросите доступ указав telegram id: `%d`", userID)
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = parseMarkdown
 	_, err := b.api.Send(msg)
 	return err
 }
@@ -168,7 +170,7 @@ func (b *Bot) Start(ctx context.Context) {
 			if update.CallbackQuery != nil {
 				// Check user access permissions for callback queries
 				if !b.CheckUserAccess(update.CallbackQuery.From.ID) {
-					if err := b.sendAccessDeniedMessage(update.CallbackQuery.Message.Chat.ID); err != nil {
+					if err := b.sendAccessDeniedMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.From.ID); err != nil {
 						log.Printf("ERROR sending access denied message: %s", err)
 					}
 					continue
@@ -186,7 +188,7 @@ func (b *Bot) Start(ctx context.Context) {
 
 			// Check user access permissions
 			if !b.CheckUserAccess(update.Message.From.ID) {
-				if err := b.sendAccessDeniedMessage(update.Message.Chat.ID); err != nil {
+				if err := b.sendAccessDeniedMessage(update.Message.Chat.ID, update.Message.From.ID); err != nil {
 					log.Printf("ERROR sending access denied message: %s", err)
 				}
 				continue
