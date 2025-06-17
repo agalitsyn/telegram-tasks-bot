@@ -6,10 +6,11 @@ import (
 )
 
 type Project struct {
-	ID       int
-	TgChatID int64
-	Title    string
-	Archived bool
+	ID          int
+	TgChatID    int64
+	Title       string
+	Description string
+	Archived    bool
 }
 
 func NewProject(title string, tgChatID int64) *Project {
