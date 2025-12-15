@@ -456,25 +456,39 @@ func (b *Bot) showMainMenuForUser(ctx context.Context, chatID int64, userID int6
 
 	text := fmt.Sprintf("🤖 *Трекер задач проекта \"%s\"*", prj.Title)
 
+	// Check if this is a private chat (positive chatID) or group chat (negative chatID)
+	isPrivateChat := chatID > 0
+
 	var keyboardRows [][]tgbotapi.InlineKeyboardButton
 
-	// Always show these buttons
+	// Always show create task button
 	keyboardRows = append(keyboardRows,
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📝 Создать задачу", "cmd_create_task"),
 		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📋 Мои задачи", "cmd_my_tasks"),
-		),
 	)
+
+	// Show "Мои задачи" only in group chats
+	if !isPrivateChat {
+		keyboardRows = append(keyboardRows,
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("📋 Мои задачи", "cmd_my_tasks"),
+			),
+		)
+	}
 
 	// Show manager buttons only for managers
 	if userID != 0 {
 		isManager, managerErr := b.isUserManager(ctx, chatID, userID)
 		if managerErr == nil && isManager {
+			// Choose button text based on chat type
+			projectTasksLabel := "📂 Задачи проекта"
+			if isPrivateChat {
+				projectTasksLabel = "📂 Задачи"
+			}
 			keyboardRows = append(keyboardRows,
 				tgbotapi.NewInlineKeyboardRow(
-					tgbotapi.NewInlineKeyboardButtonData("📂 Задачи проекта", "cmd_project_tasks"),
+					tgbotapi.NewInlineKeyboardButtonData(projectTasksLabel, "cmd_project_tasks"),
 				),
 				tgbotapi.NewInlineKeyboardRow(
 					tgbotapi.NewInlineKeyboardButtonData("⚙️ Управление проектом", "cmd_project_management"),
@@ -586,10 +600,18 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, update tgbotapi.Update) e
 		return b.startProjectRename(ctx, update)
 	case "cmd_edit_project_description":
 		return b.startProjectDescriptionEdit(ctx, update)
+	case "cmd_hide_completed_settings":
+		return b.showHideCompletedSettings(ctx, update)
 	case "cmd_assign_manager":
 		return b.showAssignManager(ctx, update)
 	case "cmd_delete_project":
 		return b.confirmDeleteProject(ctx, update)
+	case "set_hide_completed_show_all":
+		return b.setHideCompletedMode(ctx, update, model.HideCompletedModeShowAll)
+	case "set_hide_completed_hide_all":
+		return b.setHideCompletedMode(ctx, update, model.HideCompletedModeHideAll)
+	case "set_hide_completed_show_last_3":
+		return b.setHideCompletedMode(ctx, update, model.HideCompletedModeShowLast3)
 	default:
 		// Handle calendar button clicks
 		if strings.HasPrefix(data, "cal_") {
@@ -687,6 +709,9 @@ func (b *Bot) startTaskCreation(ctx context.Context, update tgbotapi.Update) err
 		return fmt.Errorf("could not fetch project: %w", err)
 	}
 
+	// Check if this is a private chat
+	isPrivateChat := chatID > 0
+
 	// Initialize task creation state
 	b.taskCreationState[userID] = &TaskCreationState{
 		Step:      TaskStepTitle,
@@ -694,7 +719,13 @@ func (b *Bot) startTaskCreation(ctx context.Context, update tgbotapi.Update) err
 		CreatedBy: userID,
 	}
 
-	msg := tgbotapi.NewMessage(chatID, "📝 *Создание новой задачи*\n\nШаг 1/4: Введите название задачи:")
+	// Choose step count based on chat type (private chat skips assignee step)
+	stepCount := "4"
+	if isPrivateChat {
+		stepCount = "3"
+	}
+
+	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("📝 *Создание новой задачи*\n\nШаг 1/%s: Введите название задачи:", stepCount))
 	msg.ParseMode = parseMarkdown
 	_, err = b.api.Send(msg)
 	return err
@@ -722,7 +753,15 @@ func (b *Bot) handleTaskCreationMessage(ctx context.Context, update tgbotapi.Upd
 		}
 		state.Title = text
 		state.Step = TaskStepDescription
-		msg := tgbotapi.NewMessage(chatID, "📄 Шаг 2/4: Введите описание задачи (или отправьте '-' чтобы пропустить):")
+
+		// Check if this is a private chat for step numbering
+		isPrivateChat := chatID > 0
+		stepNum := "2/4"
+		if isPrivateChat {
+			stepNum = "2/3"
+		}
+
+		msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("📄 Шаг %s: Введите описание задачи (или отправьте '-' чтобы пропустить):", stepNum))
 		_, err := b.api.Send(msg)
 		return err
 
@@ -730,6 +769,22 @@ func (b *Bot) handleTaskCreationMessage(ctx context.Context, update tgbotapi.Upd
 		if text != "-" {
 			state.Description = text
 		}
+
+		// Check if this is a private chat
+		isPrivateChat := chatID > 0
+
+		if isPrivateChat {
+			// In private chat, auto-assign to current user and skip to deadline
+			currentUser, err := b.userStorage.FetchUserByTgID(ctx, userID)
+			if err != nil {
+				return fmt.Errorf("could not fetch current user: %w", err)
+			}
+			state.Assignee = int64(currentUser.ID)
+			state.Step = TaskStepDeadline
+			return b.showDeadlineSelectionPrivate(ctx, chatID)
+		}
+
+		// In group chat, show assignee step
 		state.Step = TaskStepAssignee
 		assigneePrompt := "👤 Шаг 3/4: Назначьте исполнителя:\n" +
 			"• @username - для другого пользователя\n" +
@@ -813,6 +868,19 @@ func (b *Bot) handleAssigneeStep(ctx context.Context, update tgbotapi.Update, st
 
 func (b *Bot) showDeadlineSelection(ctx context.Context, chatID int64) error {
 	text := "⏰ Шаг 4/4: Установите дедлайн для задачи:\n\n" +
+		"Выберите дату из календаря ниже или:\n" +
+		"• Введите дату в формате ДД.ММ.ГГГГ (например: 25.12.2024)\n" +
+		"• Введите '-' чтобы пропустить"
+
+	keyboard := b.createCalendarKeyboard(time.Now())
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = keyboard
+	_, err := b.api.Send(msg)
+	return err
+}
+
+func (b *Bot) showDeadlineSelectionPrivate(ctx context.Context, chatID int64) error {
+	text := "⏰ Шаг 3/3: Установите дедлайн для задачи:\n\n" +
 		"Выберите дату из календаря ниже или:\n" +
 		"• Введите дату в формате ДД.ММ.ГГГГ (например: 25.12.2024)\n" +
 		"• Введите '-' чтобы пропустить"
@@ -1118,22 +1186,48 @@ func isSelfAssignment(text string) bool {
 	return false
 }
 
-func filterRecentTasks(tasks []model.Task) []model.Task {
-	// Filter out Done/Cancelled tasks that were updated more than 3 days ago
-	threeDaysAgo := time.Now().AddDate(0, 0, -3)
+func filterRecentTasks(tasks []model.Task, hideCompletedMode model.HideCompletedMode) []model.Task {
 	var filteredTasks []model.Task
 
-	for _, task := range tasks {
-		// Show task if:
-		// 1. Status is not Done or Cancelled, OR
-		// 2. Task was updated within the last 3 days
-		if (task.Status != model.TaskStatusDone && task.Status != model.TaskStatusCancelled) ||
-			task.UpdatedAt.After(threeDaysAgo) {
-			filteredTasks = append(filteredTasks, task)
-		}
-	}
+	switch hideCompletedMode {
+	case model.HideCompletedModeShowAll:
+		// Show all tasks
+		return tasks
 
-	return filteredTasks
+	case model.HideCompletedModeHideAll:
+		// Hide all Done/Cancelled tasks
+		for _, task := range tasks {
+			if task.Status != model.TaskStatusDone && task.Status != model.TaskStatusCancelled {
+				filteredTasks = append(filteredTasks, task)
+			}
+		}
+		return filteredTasks
+
+	case model.HideCompletedModeShowLast3:
+		// Filter out Done/Cancelled tasks that were updated more than 3 days ago
+		threeDaysAgo := time.Now().AddDate(0, 0, -3)
+		for _, task := range tasks {
+			// Show task if:
+			// 1. Status is not Done or Cancelled, OR
+			// 2. Task was updated within the last 3 days
+			if (task.Status != model.TaskStatusDone && task.Status != model.TaskStatusCancelled) ||
+				task.UpdatedAt.After(threeDaysAgo) {
+				filteredTasks = append(filteredTasks, task)
+			}
+		}
+		return filteredTasks
+
+	default:
+		// Default to show_last_3 behavior
+		threeDaysAgo := time.Now().AddDate(0, 0, -3)
+		for _, task := range tasks {
+			if (task.Status != model.TaskStatusDone && task.Status != model.TaskStatusCancelled) ||
+				task.UpdatedAt.After(threeDaysAgo) {
+				filteredTasks = append(filteredTasks, task)
+			}
+		}
+		return filteredTasks
+	}
 }
 
 func (b *Bot) showMyTasks(ctx context.Context, update tgbotapi.Update) error {
@@ -1173,8 +1267,8 @@ func (b *Bot) showMyTasks(ctx context.Context, update tgbotapi.Update) error {
 		return fmt.Errorf("could not filter tasks: %w", err)
 	}
 
-	// Filter out old completed/cancelled tasks
-	tasks = filterRecentTasks(tasks)
+	// Filter out old completed/cancelled tasks based on project settings
+	tasks = filterRecentTasks(tasks, project.HideCompletedMode)
 
 	if len(tasks) == 0 {
 		msg := tgbotapi.NewMessage(chatID, "📋 *Мои задачи*\n\n_У вас пока нет назначенных задач._")
@@ -1378,6 +1472,9 @@ func (b *Bot) showProjectTasks(ctx context.Context, update tgbotapi.Update) erro
 	chatID := update.Message.Chat.ID
 	userID := update.Message.From.ID
 
+	// Check if this is a private chat
+	isPrivateChat := chatID > 0
+
 	// Check if user is manager
 	isManager, err := b.isUserManager(ctx, chatID, userID)
 	if err != nil {
@@ -1409,11 +1506,17 @@ func (b *Bot) showProjectTasks(ctx context.Context, update tgbotapi.Update) erro
 		return fmt.Errorf("could not fetch tasks: %w", err)
 	}
 
-	// Filter out old completed/cancelled tasks
-	tasks = filterRecentTasks(tasks)
+	// Filter out old completed/cancelled tasks based on project settings
+	tasks = filterRecentTasks(tasks, project.HideCompletedMode)
+
+	// Choose header text based on chat type
+	headerText := "📂 *Задачи проекта*"
+	if isPrivateChat {
+		headerText = "📂 *Задачи*"
+	}
 
 	if len(tasks) == 0 {
-		msg := tgbotapi.NewMessage(chatID, "📂 *Задачи проекта*\n\n_В проекте пока нет задач._")
+		msg := tgbotapi.NewMessage(chatID, headerText+"\n\n_В проекте пока нет задач._")
 		msg.ParseMode = parseMarkdown
 		keyboard := tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
@@ -1428,21 +1531,28 @@ func (b *Bot) showProjectTasks(ctx context.Context, update tgbotapi.Update) erro
 	// Build inline keyboard with task buttons (one per row)
 	var keyboardRows [][]tgbotapi.InlineKeyboardButton
 	for _, task := range tasks {
-		// Get assignee name
-		var assigneeName string
-		if task.Assignee != 0 {
-			assigneeUser, err := b.userStorage.FetchUserByID(ctx, int(task.Assignee))
-			if err == nil {
-				assigneeName = assigneeUser.FullName
-			} else {
-				assigneeName = fmt.Sprintf("ID:%d", task.Assignee)
-			}
+		statusEmoji := getTaskStatusEmoji(task.Status)
+		var buttonText string
+
+		if isPrivateChat {
+			// In private chat, don't show assignee (always current user)
+			buttonText = fmt.Sprintf("%s #%d %s", statusEmoji, task.ID, task.Title)
 		} else {
-			assigneeName = "Не назначен"
+			// In group chat, show assignee
+			var assigneeName string
+			if task.Assignee != 0 {
+				assigneeUser, err := b.userStorage.FetchUserByID(ctx, int(task.Assignee))
+				if err == nil {
+					assigneeName = assigneeUser.FullName
+				} else {
+					assigneeName = fmt.Sprintf("ID:%d", task.Assignee)
+				}
+			} else {
+				assigneeName = "Не назначен"
+			}
+			buttonText = fmt.Sprintf("%s #%d %s - %s", statusEmoji, task.ID, task.Title, assigneeName)
 		}
 
-		statusEmoji := getTaskStatusEmoji(task.Status)
-		buttonText := fmt.Sprintf("%s #%d %s - %s", statusEmoji, task.ID, task.Title, assigneeName)
 		callbackData := fmt.Sprintf("task_%d", task.ID)
 
 		row := tgbotapi.NewInlineKeyboardRow(
@@ -1459,7 +1569,7 @@ func (b *Bot) showProjectTasks(ctx context.Context, update tgbotapi.Update) erro
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(keyboardRows...)
 
-	text := fmt.Sprintf("📂 *Задачи проекта*\n\n_Всего задач: %d_", len(tasks))
+	text := fmt.Sprintf("%s\n\n_Всего задач: %d_", headerText, len(tasks))
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = parseMarkdown
 	msg.ReplyMarkup = keyboard
@@ -2032,7 +2142,26 @@ func (b *Bot) showProjectManagement(ctx context.Context, chatID int64, userID in
 		text += "\n*Описание:* _Не указано_"
 	}
 
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+	// Add hide completed mode setting
+	var hideCompletedText string
+	switch project.HideCompletedMode {
+	case model.HideCompletedModeShowAll:
+		hideCompletedText = "Нет (показывать все)"
+	case model.HideCompletedModeHideAll:
+		hideCompletedText = "Да (всегда скрывать)"
+	case model.HideCompletedModeShowLast3:
+		hideCompletedText = "Показывать последние 3"
+	default:
+		hideCompletedText = "Показывать последние 3"
+	}
+	text += fmt.Sprintf("\n*Скрывать выполненные:* %s", hideCompletedText)
+
+	// Check if this is a private chat
+	isPrivateChat := chatID > 0
+
+	// Build keyboard rows dynamically
+	var keyboardRows [][]tgbotapi.InlineKeyboardButton
+	keyboardRows = append(keyboardRows,
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("✏️ Переименовать проект", "cmd_rename_project"),
 		),
@@ -2040,13 +2169,144 @@ func (b *Bot) showProjectManagement(ctx context.Context, chatID int64, userID in
 			tgbotapi.NewInlineKeyboardButtonData("📝 Изменить описание", "cmd_edit_project_description"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("👤 Назначить менеджера", "cmd_assign_manager"),
+			tgbotapi.NewInlineKeyboardButtonData("👁️ Скрывать выполненные", "cmd_hide_completed_settings"),
 		),
+	)
+
+	// Show "Назначить менеджера" only in group chats
+	if !isPrivateChat {
+		keyboardRows = append(keyboardRows,
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("👤 Назначить менеджера", "cmd_assign_manager"),
+			),
+		)
+	}
+
+	keyboardRows = append(keyboardRows,
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("❌ Удалить проект", "cmd_delete_project"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "cmd_back_to_menu"),
+		),
+	)
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(keyboardRows...)
+
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = parseMarkdown
+	msg.ReplyMarkup = keyboard
+
+	_, err = b.api.Send(msg)
+	return err
+}
+
+func (b *Bot) showHideCompletedSettings(ctx context.Context, update tgbotapi.Update) error {
+	chatID := update.CallbackQuery.Message.Chat.ID
+	userID := update.CallbackQuery.From.ID
+
+	// Check if user is manager
+	isManager, err := b.isUserManager(ctx, chatID, userID)
+	if err != nil {
+		return fmt.Errorf("could not check user role: %w", err)
+	}
+	if !isManager {
+		msg := tgbotapi.NewMessage(chatID, "❌ У вас нет прав для изменения настроек проекта.")
+		_, err := b.api.Send(msg)
+		return err
+	}
+
+	// Get current project
+	project, err := b.projectStorage.FetchProjectByChatID(ctx, chatID)
+	if err != nil {
+		return fmt.Errorf("could not fetch project: %w", err)
+	}
+
+	text := "👁️ *Скрывать выполненные задачи*\n\nВыберите режим отображения выполненных задач:"
+
+	// Create keyboard with three options
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Нет (показывать все)", "set_hide_completed_show_all"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Да (всегда скрывать)", "set_hide_completed_hide_all"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Показывать последние 3", "set_hide_completed_show_last_3"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "cmd_project_management"),
+		),
+	)
+
+	// Add current setting indicator
+	var currentSetting string
+	switch project.HideCompletedMode {
+	case model.HideCompletedModeShowAll:
+		currentSetting = "Нет (показывать все)"
+	case model.HideCompletedModeHideAll:
+		currentSetting = "Да (всегда скрывать)"
+	case model.HideCompletedModeShowLast3:
+		currentSetting = "Показывать последние 3"
+	default:
+		currentSetting = "Показывать последние 3"
+	}
+	text += fmt.Sprintf("\n\n*Текущая настройка:* %s", currentSetting)
+
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = parseMarkdown
+	msg.ReplyMarkup = keyboard
+
+	_, err = b.api.Send(msg)
+	return err
+}
+
+func (b *Bot) setHideCompletedMode(ctx context.Context, update tgbotapi.Update, mode model.HideCompletedMode) error {
+	chatID := update.CallbackQuery.Message.Chat.ID
+	userID := update.CallbackQuery.From.ID
+
+	// Check if user is manager
+	isManager, err := b.isUserManager(ctx, chatID, userID)
+	if err != nil {
+		return fmt.Errorf("could not check user role: %w", err)
+	}
+	if !isManager {
+		msg := tgbotapi.NewMessage(chatID, "❌ У вас нет прав для изменения настроек проекта.")
+		_, err := b.api.Send(msg)
+		return err
+	}
+
+	// Get current project
+	project, err := b.projectStorage.FetchProjectByChatID(ctx, chatID)
+	if err != nil {
+		return fmt.Errorf("could not fetch project: %w", err)
+	}
+
+	// Update hide completed mode
+	project.HideCompletedMode = mode
+	err = b.projectStorage.UpdateProject(ctx, project)
+	if err != nil {
+		msg := tgbotapi.NewMessage(chatID, "❌ Ошибка при обновлении настроек проекта.")
+		_, err := b.api.Send(msg)
+		return err
+	}
+
+	// Show success message and return to project management
+	var modeName string
+	switch mode {
+	case model.HideCompletedModeShowAll:
+		modeName = "Нет (показывать все)"
+	case model.HideCompletedModeHideAll:
+		modeName = "Да (всегда скрывать)"
+	case model.HideCompletedModeShowLast3:
+		modeName = "Показывать последние 3"
+	}
+
+	text := fmt.Sprintf("✅ Настройка обновлена!\n\n*Скрывать выполненные:* %s", modeName)
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "cmd_project_management"),
 		),
 	)
 
