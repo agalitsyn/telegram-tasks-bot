@@ -5,18 +5,28 @@ import (
 	"errors"
 )
 
+type HideCompletedMode string
+
+const (
+	HideCompletedModeShowAll   HideCompletedMode = "show_all"
+	HideCompletedModeHideAll   HideCompletedMode = "hide_all"
+	HideCompletedModeShowLast3 HideCompletedMode = "show_last_3"
+)
+
 type Project struct {
-	ID          int
-	TgChatID    int64
-	Title       string
-	Description string
-	Archived    bool
+	ID                int
+	TgChatID          int64
+	Title             string
+	Description       string
+	Archived          bool
+	HideCompletedMode HideCompletedMode
 }
 
 func NewProject(title string, tgChatID int64) *Project {
 	return &Project{
-		Title:    title,
-		TgChatID: tgChatID,
+		Title:             title,
+		TgChatID:          tgChatID,
+		HideCompletedMode: HideCompletedModeShowLast3,
 	}
 }
 

@@ -16,8 +16,8 @@ func NewProjectStorage(db *sql.DB) *ProjectStorage {
 }
 
 func (s *ProjectStorage) CreateProject(ctx context.Context, project *model.Project) error {
-	const q = `INSERT INTO projects (tg_chat_id, title, description, archived) VALUES (?, ?, ?, ?)`
-	result, err := s.db.ExecContext(ctx, q, project.TgChatID, project.Title, project.Description, project.Archived)
+	const q = `INSERT INTO projects (tg_chat_id, title, description, archived, hide_completed_mode) VALUES (?, ?, ?, ?, ?)`
+	result, err := s.db.ExecContext(ctx, q, project.TgChatID, project.Title, project.Description, project.Archived, project.HideCompletedMode)
 	if err != nil {
 		return err
 	}
@@ -32,7 +32,7 @@ func (s *ProjectStorage) CreateProject(ctx context.Context, project *model.Proje
 }
 
 func (s *ProjectStorage) GetProjectByID(ctx context.Context, id int) (*model.Project, error) {
-	const q = `SELECT id, tg_chat_id, title, description, archived FROM projects WHERE id = ?`
+	const q = `SELECT id, tg_chat_id, title, description, archived, hide_completed_mode FROM projects WHERE id = ?`
 	var project model.Project
 	err := s.db.QueryRowContext(ctx, q, id).Scan(
 		&project.ID,
@@ -40,6 +40,7 @@ func (s *ProjectStorage) GetProjectByID(ctx context.Context, id int) (*model.Pro
 		&project.Title,
 		&project.Description,
 		&project.Archived,
+		&project.HideCompletedMode,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -51,7 +52,7 @@ func (s *ProjectStorage) GetProjectByID(ctx context.Context, id int) (*model.Pro
 }
 
 func (s *ProjectStorage) FetchProjectByChatID(ctx context.Context, tgChatID int64) (*model.Project, error) {
-	const q = `SELECT id, tg_chat_id, title, description, archived FROM projects WHERE tg_chat_id = ?`
+	const q = `SELECT id, tg_chat_id, title, description, archived, hide_completed_mode FROM projects WHERE tg_chat_id = ?`
 	var project model.Project
 	err := s.db.QueryRowContext(ctx, q, tgChatID).Scan(
 		&project.ID,
@@ -59,6 +60,7 @@ func (s *ProjectStorage) FetchProjectByChatID(ctx context.Context, tgChatID int6
 		&project.Title,
 		&project.Description,
 		&project.Archived,
+		&project.HideCompletedMode,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -70,8 +72,8 @@ func (s *ProjectStorage) FetchProjectByChatID(ctx context.Context, tgChatID int6
 }
 
 func (s *ProjectStorage) UpdateProject(ctx context.Context, project *model.Project) error {
-	const q = `UPDATE projects SET title = ?, description = ?, archived = ? WHERE id = ?`
-	_, err := s.db.ExecContext(ctx, q, project.Title, project.Description, project.Archived, project.ID)
+	const q = `UPDATE projects SET title = ?, description = ?, archived = ?, hide_completed_mode = ? WHERE id = ?`
+	_, err := s.db.ExecContext(ctx, q, project.Title, project.Description, project.Archived, project.HideCompletedMode, project.ID)
 	return err
 }
 

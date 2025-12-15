@@ -287,16 +287,9 @@ func (b *Bot) startCommand(ctx context.Context, update tgbotapi.Update) error {
 	userID := update.Message.From.ID
 
 	// Check if project already exists
-	prj, err := b.projectStorage.FetchProjectByChatID(ctx, chatID)
+	_, err := b.projectStorage.FetchProjectByChatID(ctx, chatID)
 	if err == nil {
-		statusText := fmt.Sprintf("✅ Проект \"%s\" уже создан, воспользуйтесь главным меню.", prj.Title)
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, statusText)
-		msg.ParseMode = parseMarkdown
-		_, err = b.api.Send(msg)
-		if err != nil {
-			return err
-		}
-		// Project exists, show message and redirect to main menu
+		// Project exists, show main menu directly
 		return b.showMainMenuForUser(ctx, chatID, userID)
 	}
 
