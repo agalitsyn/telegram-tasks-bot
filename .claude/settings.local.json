@@ -1,0 +1,37 @@
+{
+    "permissions": {
+        "allow": [
+            "Bash(cat:*)",
+            "Bash(tee:*)",
+            "Bash(grep:*)",
+            "Bash(sed:*)",
+            "Bash(rg:*)",
+            "Bash(tree:*)",
+            "Bash(rm:*)",
+            "Bash(mv:*)",
+            "Bash(xargs:*)",
+            "Bash(jq:*)",
+            "Bash(open:*)",
+            "Bash(find:*)",
+            "Bash(mkdir:*)",
+            "Bash(make:*)",
+            "Bash(ls:*)",
+            "Bash(source:*)",
+            "Bash(awk:*)",
+            "Bash(git:*)",
+            "Bash(gh:*)",
+            "Bash(go:*)",
+            "Bash(gofmt:*)",
+            "Bash(golangci-lint:*)",
+            "Bash(python:*)",
+            "Bash(docker:*)",
+            "Bash(curl:*)",
+            "WebFetch(domain:*)",
+            "WebSearch",
+            "mcp__plugin_context7_context7__resolve-library-id",
+            "mcp__plugin_context7_context7__query-docs",
+            "mcp__ide__getDiagnostics"
+        ],
+        "deny": []
+    }
+}
